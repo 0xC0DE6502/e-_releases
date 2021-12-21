@@ -1,0 +1,148 @@
+// Graphics module
+// Part of e- Compiler package
+// Copyright (c) 2021 0xC0DE (@0xC0DE6502)
+//
+// call gfx_init() before use
+//
+
+#define putpixel __gfx_putpixel_mode_4
+
+declare gfx_init();
+
+declare circle(int, int, int);
+declare mode(byte);
+declare moveto(int, int);
+declare lineto(int, int);
+declare wait_vsync();
+
+declare __gfx_putpixel_mode_4(int, int);
+declare __gfx_pixels8(int, int, int, int);
+declare __gfx_x:int, __gfx_y:int;
+declare __gfx_data();
+
+function gfx_init();
+  moveto(0, 0);
+endfunction;
+
+function wait_vsync();
+ asm "lda #19";
+ asm "jmp &fff4"; //jmp!
+endfunction;
+
+function __gfx_pixels8(xc:int, yc:int, x:int, y:int);
+  declare xcpx:int, xcmx:int;
+  declare ycpy:int, ycmy:int;
+  declare xcpy:int, xcmy:int;
+  declare ycpx:int, ycmx:int;
+  xcpx=xc+x; xcmx=xc-x;
+  ycpy=yc+y; ycmy=yc-y;
+  xcpy=xc+y; xcmy=xc-y;
+  ycpx=yc+x; ycmx=yc-x;
+  putpixel(xcpx, ycpy);
+  putpixel(xcpx, ycmy);
+  putpixel(xcmx, ycpy);
+  putpixel(xcmx, ycmy);
+  putpixel(xcpy, ycpx);
+  putpixel(xcpy, ycmx);
+  putpixel(xcmy, ycpx);
+  putpixel(xcmy, ycmx);
+endfunction;
+
+function circle(xc:int, yc:int, r:int);
+  declare x:int, y:int, d:int;
+  x=0;
+  y=r;
+  d=3-r<<1;
+  __gfx_pixels8(xc, yc, x, y);
+  while (x<y);
+    x=x+1;
+    if (d<0);
+      d=d+x<<2+6;
+    else;
+      y=y-1;
+      d=d+(x-y)<<2+10;
+    endif;
+    __gfx_pixels8(xc, yc, x, y);
+  endwhile;
+endfunction;
+
+// MODE 4
+function __gfx_putpixel_mode_4(x:int, y:int);
+  if ((x<0) or (x>=320) or (y<0) or (y>=256)); return; endif;
+  declare addr:word, mask:byte;
+
+//  addr=&5800+(y>>3)*320+(y and 7)+8*(x>>3);
+//  mask=%10000000>>(x and 7);
+
+  asm "_m_ldabsx @y";
+  asm "tay";
+  asm "lda mode_4_5_pixelrow_lo,y";
+  asm "_m_stabsx @addr+0";
+  asm "lda mode_4_5_pixelrow_hi,y";
+  asm "_m_stabsx @addr+1";
+  addr=addr+(x and %1111111111111000);
+  asm "_m_ldabsx @x";
+  asm "and #7";
+  asm "tay";
+  asm "lda __gfx_bitmask8bpp,y";
+  asm "_m_stabsx @mask";
+
+  ?addr=?addr xor mask;
+endfunction;
+
+function moveto(x:int, y:int);
+  __gfx_x=x;
+  __gfx_y=y;
+endfunction;
+
+// this is very slow at the moment!
+function lineto(x:int, y:int);
+  declare dx:int, dy:int;
+  declare sx:int, sy:int;
+  declare e:int, e2:int;
+  dx=x-__gfx_x;
+  dy=y-__gfx_y;
+  if (dx>0); sx=1; else; sx=-1; dx=-dx; endif;
+  if (dy>0); sy=1; else; sy=-1; dy=-dy; endif;
+  if (dx>dy); e=dx>>1; else; e=(-dy)>>1; endif;
+  while ((__gfx_x!=x) or (__gfx_y!=y));
+    putpixel(__gfx_x, __gfx_y);
+    e2=e;
+    if (e2>-dx); e=e-dy; __gfx_x=__gfx_x+sx; endif;
+    if (e2<dy); e=e+dx; __gfx_y=__gfx_y+sy; endif;
+  endwhile;
+  putpixel(x, y);
+endfunction;
+
+function mode(m:byte);
+  asm "lda #22";
+  asm "jsr &ffee";
+  asm "_m_ldabsx @m";
+  asm "jmp &ffee"; //jmp!
+endfunction;
+
+// __gfx_data() does not have to be called!
+function __gfx_data();
+  return;
+
+  asm ".*__gfx_bitmask8bpp";
+  asm "equb %10000000";
+  asm "equb %01000000";
+  asm "equb %00100000";
+  asm "equb %00010000";
+  asm "equb %00001000";
+  asm "equb %00000100";
+  asm "equb %00000010";
+  asm "equb %00000001";
+
+  asm ".*mode_4_5_pixelrow_lo";
+  asm "for n,0,256-1";
+  asm "  equb lo(&5800+320*(n div 8)+(n mod 8))";
+  asm "next ;n";
+
+  asm ".*mode_4_5_pixelrow_hi";
+  asm "for n,0,256-1";
+  asm "  equb hi(&5800+320*(n div 8)+(n mod 8))";
+  asm "next ;n";
+endfunction;
+

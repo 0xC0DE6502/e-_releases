@@ -1,0 +1,329 @@
+
+; ========================================================
+; Library: lib.6502
+; Part of e- Compiler
+; Copyright (c) 2021 0xC0DE (@0xC0DE6502)
+
+{
+
+oswrch=&ffee
+
+__P__=*
+
+  org &80
+.*_e_t0 skip 1
+.*_e_t1 skip 1
+.*_e_t2 skip 1
+.*_e_t3 skip 1
+.*_e_t4 skip 1
+.*_e_t5 skip 1
+.*_e_t6 skip 1
+.*_e_t7 skip 1
+.*_e_t8 skip 1
+.*_e_t9 skip 1
+
+  org __P__
+
+; see: https://llx.com/Neil/a2/mult.html
+; reads 2 positive 8bit numbers directly from stack and leaves 8bit (truncated!) result in A
+.*_e_mult8x8
+{
+  stx _e_t0
+  tsx
+  lda &104,x ; operand 1
+  sta _e_t1
+  lda &103,x ; operand 2
+  sta _e_t2
+  lda #0
+  ldy #8
+.loop
+  lsr _e_t2
+  bcc rot
+  clc
+  adc _e_t1
+.rot
+  ror a
+  ror _e_t3 ; lsb of result (A will be msb of result)
+  dey
+  bne loop
+  lda _e_t3 ; return lsb, discard msb (previously in A)
+  ldx _e_t0
+  rts
+}
+
+; see: https://llx.com/Neil/a2/mult.html
+; reads 2 positive 16bit numbers directly from stack and leaves 16bit (truncated!) result in YA
+.*_e_mult16x16
+{
+  stx _e_t0
+  tsx
+  lda &106,x ; msb of operand 1
+  sta _e_t2
+  lda &105,x ; lsb of operand 1
+  sta _e_t1
+  lda &104,x ; msb of operand 2
+  sta _e_t4
+  lda &103,x ; lsb of operand 2
+  sta _e_t3
+.*_e_cont_mult16x16
+  lda #0
+  sta _e_t7
+  ldy #16
+.loop
+  lsr _e_t4
+  ror _e_t3
+  bcc rot
+  pha
+  clc
+  lda _e_t7
+  adc _e_t1
+  sta _e_t7
+  pla
+  adc _e_t2
+.rot
+  ror a
+  ror _e_t7
+  ror _e_t6
+  ror _e_t5
+  dey
+  bne loop
+  ldy _e_t6 ; return lsw in YA, discard msw
+  lda _e_t5
+  ldx _e_t0
+  rts
+}
+
+; Y==0 --> msb of operand 1 = 0
+; Y==1 --> msb of operand 1 is sign extension of lsb
+.*_e_mult8x16
+{
+  stx _e_t0
+  tsx
+  lda &105,x ; operand 1 (8bit)
+  cpy #0
+  beq store
+  ; do sign extend
+  dey ; Y=0
+  cmp #&80
+  bcc store
+  dey ; Y=&ff
+.store
+  sty _e_t2 ; virtual msb of operand 1
+  sta _e_t1 ; lsb of operand 1
+  lda &104,x ; msb of operand 2
+  sta _e_t4
+  lda &103,x ; lsb of operand 2
+  sta _e_t3
+  jmp _e_cont_mult16x16
+}
+
+; Y==0 --> msb of operand 2 = 0
+; Y==1 --> msb of operand 2 is sign extension of lsb
+.*_e_mult16x8
+{
+  stx _e_t0
+  tsx
+  lda &103,x ; operand 2 (8bit)
+  cpy #0
+  beq store
+  ; do sign extend
+  dey ; Y=0
+  cmp #&80
+  bcc store
+  dey ; Y=&ff
+.store
+  sty _e_t4 ; virtual msb of operand 2
+  sta _e_t3 ; lsb of operand 2
+  lda &105,x ; msb of operand 1
+  sta _e_t2
+  lda &104,x ; lsb of operand 1
+  sta _e_t1
+  jmp _e_cont_mult16x16
+}
+
+; A = signed 8bit number
+.*_e_print_int8
+{
+  tay ; test 8bit number
+  sta _e_t2 ; remember (sign of) original number
+  bpl is_pos
+  ; make negative number positive
+  eor #&ff
+  clc
+  adc #1
+.is_pos
+  sta _e_t0 ; remember number (made positive)  
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta _e_t1 ; collecting decimal digit
+  ldy #8 ; loop counter (8 bits)
+.loop
+  asl _e_t0
+  rol _e_t1
+  lda _e_t1
+  sec: sbc #10
+  bcc less10
+  sta _e_t1
+  inc _e_t0
+.less10
+  dey
+  bne loop
+  lda _e_t1
+  ora #'0'
+  pha
+  lda _e_t0
+  bne div10
+
+  lda _e_t2 ; was neg?
+  bpl is_pos2
+  lda #'-'
+  jsr oswrch
+.is_pos2
+  pla
+.print
+  jsr oswrch
+  pla
+  bne print
+
+  rts
+}
+
+; A = unsigned 8bit number
+.*_e_print_uint8
+{
+  sta _e_t0 ; remember number
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta _e_t1 ; collecting decimal digit
+  ldy #8 ; loop counter (8 bits)
+.loop
+  asl _e_t0
+  rol _e_t1
+  lda _e_t1
+  sec: sbc #10
+  bcc less10
+  sta _e_t1
+  inc _e_t0
+.less10
+  dey
+  bne loop
+  lda _e_t1
+  ora #'0'
+  pha
+  lda _e_t0
+  bne div10
+
+  pla
+.print
+  jsr oswrch
+  pla
+  bne print
+
+  rts
+}
+
+; AY = signed 16bit number
+.*_e_print_int16
+{
+  cmp #&80
+  sta _e_t3 ; remember (sign of) original number (msb)
+  bcc is_pos
+  ; make negative number positive
+  ; C=1
+  tya
+  eor #&ff
+  adc #0 ; add 1 (because C=1)
+  tay
+  lda _e_t3
+  eor #&ff
+  adc #0
+.is_pos
+  sty _e_t0 ; remember number (made positive), lsb
+  sta _e_t1 ; msb
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta _e_t2 ; collecting decimal digit
+  ldy #16 ; loop counter (16 bits)
+.loop
+  asl _e_t0
+  rol _e_t1
+  rol _e_t2
+  lda _e_t2
+  sec: sbc #10
+  bcc less10
+  sta _e_t2
+  inc _e_t0
+.less10
+  dey
+  bne loop
+  lda _e_t2
+  ora #'0'
+  pha
+  lda _e_t0
+  ora _e_t1
+  bne div10
+
+  lda _e_t3 ; was neg?
+  bpl is_pos2
+  lda #'-'
+  jsr oswrch
+.is_pos2
+  pla
+.print
+  jsr oswrch
+  pla
+  bne print
+
+  rts
+}
+
+; AY = unsigned 16bit number
+.*_e_print_uint16
+{
+  sty _e_t0 ; lsb
+  sta _e_t1 ; msb
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta _e_t2 ; collecting decimal digit
+  ldy #16 ; loop counter (16 bits)
+.loop
+  asl _e_t0
+  rol _e_t1
+  rol _e_t2
+  lda _e_t2
+  sec: sbc #10
+  bcc less10
+  sta _e_t2
+  inc _e_t0
+.less10
+  dey
+  bne loop
+  lda _e_t2
+  ora #'0'
+  pha
+  lda _e_t0
+  ora _e_t1
+  bne div10
+
+  pla
+.print
+  jsr oswrch
+  pla
+  bne print
+
+  rts
+}
+
+}
+
+; End of Library: lib.6502
+; ========================================================
+

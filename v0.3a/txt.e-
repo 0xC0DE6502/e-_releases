@@ -1,0 +1,52 @@
+// Text module
+// Part of e- Compiler package
+// Copyright (c) 2021 0xC0DE (@0xC0DE6502)
+//
+// call txt_init() before use
+//
+
+declare txt_init();
+
+declare cursorto(byte, byte);
+declare printstr(word);
+declare vdu(byte);
+declare cursor(byte);
+
+function txt_init();
+  // nothing
+endfunction;
+
+function cursorto(x:byte, y:byte);
+  vdu(31);
+  vdu(x);
+  vdu(y);
+endfunction;
+
+function printstr(s:word);
+  asm "_m_ldabsx @s+0";
+  asm "sta @0";
+  asm "_m_ldabsx @s+1";
+  asm "sta @1";
+  asm "ldy #0";
+  asm "{";
+  asm ".loop";
+  asm "lda (@0),y";
+  asm "beq end";
+  asm "jsr &ffee ; OSWRCH";
+  asm "iny";
+  asm "bne loop";
+  asm ".end";
+  asm "}";
+endfunction;
+
+function vdu(b:byte);
+  asm "_m_ldabsx @b";
+  asm "jmp &ffee"; //jmp!
+endfunction;
+
+function cursor(b:byte);
+  vdu(23); vdu(1); vdu(!!b and 1);
+  declare i:uint8;
+  i=0; while (i<7); vdu(0); i=i+1; endwhile;
+endfunction;
+

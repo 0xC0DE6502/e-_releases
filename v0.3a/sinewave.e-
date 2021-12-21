@@ -1,0 +1,59 @@
+// Sine Wave In Motion
+// e- source file, compiles to 6502 BeebAsm source with e- Compiler
+// Generated code runs on Acorn Electron, BBC Micro, BBC Master
+// Copyright (c) 2021 0xC0DE (@0xC0DE6502)
+
+#loadaddr $2000
+
+#include "gfx.e-"
+#include "txt.e-"
+
+declare main();
+declare data();
+
+function main();
+  gfx_init();
+  txt_init();
+
+  mode(4);
+  cursor(0);
+  cursorto(7, 14); printstr(@str_title1);
+  cursorto(7, 16); printstr(@str_title2);
+  cursorto(7, 18); printstr(@str_title3);
+
+  declare x:byte, y:int, start_idx:byte, idx:byte;
+
+  // draw initial sine wave
+  idx=0;
+  x=56;
+  while (x<240);
+    putpixel(x, ?(@sine_table+idx));
+    x=x+4;
+    idx=idx+8;
+  endwhile;
+
+  // animate sine wave
+  start_idx=0;
+  while (1);
+    x=56;
+    idx=start_idx;
+    y=?(@sine_table+idx);
+    while (x<240);
+      putpixel(x, y); // erase at old position
+      idx=idx+8;
+      y=?(@sine_table+idx);
+      putpixel(x, y); // draw at new position
+      x=x+4;
+    endwhile;
+    start_idx=start_idx+8;
+  endwhile;
+endfunction;
+
+function data();
+  return;
+  asm ".*str_title1 equs \"~ SINE WAVE IN MOTION ~\", 0";
+  asm ".*str_title2 equs \"Example program in e-\", 0";
+  asm ".*str_title3 equs \"By @@0xC0DE6502 Dec 2021\", 0";
+  asm "align 256: .*sine_table for n,0,256-1: equb 128+32*cos(2*PI*n/256)+16*sin(4*PI*n/256)+8*cos(6*PI*n/256): next";
+endfunction;
+

@@ -74,18 +74,24 @@ function __gfx_putpixel_mode_4(x:int, y:int);
 //  addr=&5800+(y>>3)*320+(y and 7)+8*(x>>3);
 //  mask=%10000000>>(x and 7);
 
-  asm "_m_ldabsx @y";
-  asm "tay";
-  asm "lda mode_4_5_pixelrow_lo,y";
-  asm "_m_stabsx @addr+0";
-  asm "lda mode_4_5_pixelrow_hi,y";
-  asm "_m_stabsx @addr+1";
+  asm;
+    _m_ldabsx @y
+    tay
+    lda mode_4_5_pixelrow_lo,y
+    _m_stabsx @addr+0
+    lda mode_4_5_pixelrow_hi,y
+    _m_stabsx @addr+1
+  endasm;
+
   addr=addr+(x and %1111111111111000);
-  asm "_m_ldabsx @x";
-  asm "and #7";
-  asm "tay";
-  asm "lda __gfx_bitmask8bpp,y";
-  asm "_m_stabsx @mask";
+
+  asm;
+    _m_ldabsx @x
+    and #7
+    tay
+    lda __gfx_bitmask8bpp,y
+    _m_stabsx @mask
+  endasm;
 
   ?addr=?addr xor mask;
 endfunction;
@@ -125,24 +131,26 @@ endfunction;
 function __gfx_data();
   return;
 
-  asm ".*__gfx_bitmask8bpp";
-  asm "equb %10000000";
-  asm "equb %01000000";
-  asm "equb %00100000";
-  asm "equb %00010000";
-  asm "equb %00001000";
-  asm "equb %00000100";
-  asm "equb %00000010";
-  asm "equb %00000001";
+  asm;
+    .*__gfx_bitmask8bpp
+      equb %10000000
+      equb %01000000
+      equb %00100000
+      equb %00010000
+      equb %00001000
+      equb %00000100
+      equb %00000010
+      equb %00000001
 
-  asm ".*mode_4_5_pixelrow_lo";
-  asm "for n,0,256-1";
-  asm "  equb lo(&5800+320*(n div 8)+(n mod 8))";
-  asm "next ;n";
+    .*mode_4_5_pixelrow_lo
+      for n,0,256-1
+        equb lo(&5800+320*(n div 8)+(n mod 8))
+      next ;n
 
-  asm ".*mode_4_5_pixelrow_hi";
-  asm "for n,0,256-1";
-  asm "  equb hi(&5800+320*(n div 8)+(n mod 8))";
-  asm "next ;n";
+    .*mode_4_5_pixelrow_hi
+      for n,0,256-1
+        equb hi(&5800+320*(n div 8)+(n mod 8))
+      next ;n
+  endasm;
 endfunction;
 

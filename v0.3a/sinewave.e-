@@ -51,9 +51,22 @@ endfunction;
 
 function data();
   return;
-  asm ".*str_title1 equs \"~ SINE WAVE IN MOTION ~\", 0";
-  asm ".*str_title2 equs \"Example program in e-\", 0";
-  asm ".*str_title3 equs \"By @@0xC0DE6502 Dec 2021\", 0";
-  asm "align 256: .*sine_table for n,0,256-1: equb 128+32*cos(2*PI*n/256)+16*sin(4*PI*n/256)+8*cos(6*PI*n/256): next";
+
+  asm;
+    .*str_title1 
+      equs "~ SINE WAVE IN MOTION ~", 0
+
+    .*str_title2 
+      equs "Example program in e-", 0
+
+    .*str_title3 
+      equs "By @@0xC0DE6502 Dec 2021", 0
+
+      align 256
+    .*sine_table
+      for n,0,256-1
+        equb 128+32*cos(2*PI*n/256)+16*sin(4*PI*n/256)+8*cos(6*PI*n/256)
+      next ;n
+  endasm;
 endfunction;
 

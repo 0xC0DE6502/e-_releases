@@ -23,20 +23,22 @@ function cursorto(x:byte, y:byte);
 endfunction;
 
 function printstr(s:word);
-  asm "_m_ldabsx @s+0";
-  asm "sta @0";
-  asm "_m_ldabsx @s+1";
-  asm "sta @1";
-  asm "ldy #0";
-  asm "{";
-  asm ".loop";
-  asm "lda (@0),y";
-  asm "beq end";
-  asm "jsr &ffee ; OSWRCH";
-  asm "iny";
-  asm "bne loop";
-  asm ".end";
-  asm "}";
+  asm;
+    _m_ldabsx @s+0
+    sta @0
+    _m_ldabsx @s+1
+    sta @1
+    ldy #0
+    {
+      .loop
+        lda (@0),y
+        beq end
+        jsr &ffee ; OSWRCH
+        iny
+        bne loop
+      .end
+    }
+  endasm;
 endfunction;
 
 function vdu(b:byte);

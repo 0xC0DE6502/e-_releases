@@ -1,0 +1,1033 @@
+// Python
+// Game for Acorn Electron and BBC Micro
+// Written in e-, compiled to 6502 asm, assembled with BeebAsm
+// Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+//
+// Main source file for the game
+// Written as an example (proof of concept) for the e- compiler package
+// The game uses almost all RAM available while still keeping the MOS in play (for sound, key scanning, etc)
+//
+
+#loadaddr &e00
+
+#include "python.h.e-"
+
+// general init at the very start of the game
+function init();
+  sys_init();
+  txt_init();
+  gfx_init();
+  spr_init();
+  snd_init();
+
+  asm;
+  {
+    lda @__sys_is_electron
+    beq beeb
+    lda #0: sta &242 ; &&&&Elk only: disable key scanning for slight speed up; does seem to give some problems when calling OSCLI for instance (?)
+  .beeb
+  }
+  endasm;
+
+  mode(5);
+  cursor(0);
+  def_chars();
+  music_toggle=1;
+  hiscore=0;
+endfunction;
+
+// print 0-string with custom font at (x,y) in pixel coords (x must be multiple of 4 wide pixels)
+function print_font_str_at(x:byte, y:byte, s:word);
+  declare c:byte;
+  c=?s;
+  while (c);
+    if (c!=32);
+      c=(c-64)<<1;
+      putsprite8x8(x, y, @letters_symbols_8x8x32_sprites+c);
+    endif;
+    x=x+8;
+    s=s+1;
+    c=?s;
+  endwhile;
+endfunction;
+
+// called whenever a new game starts
+function init_game();
+  level=START_LEVEL;
+  lives=START_LIVES;
+  start_time=START_TIME;
+  score=0;
+endfunction;
+
+// called whenever a level (re)starts
+function init_level();
+  n_diamonds=0;
+  grow=0;
+  stuck=0;
+
+  time=start_time;
+  time_counter_reload=TIME_COUNTER;
+  time_counter=time_counter_reload;
+  time_needs_update=0;
+  time_enabled=0;
+
+  tune_enabled=0;
+  tune_index=@tune_data;
+  tune_counter_reload=TUNE_COUNTER;
+  tune_counter=tune_counter_reload;
+  tune_note_len=NOTE_LEN;
+
+  asm;
+    txa: pha
+    lda #21
+    ldx #0
+    jsr &fff4 ; OSBYTE: *FX21,0 flush keyboard buffer // this doesn't help with emulators which buffer key presses at host level!
+    pla: tax
+  endasm;
+endfunction;
+
+// set palette registers (Elk only) for debugging flicker free sprite plotting
+function debugbars(r1:byte, r2:byte);
+  if (DEBUGBARS and __sys_is_electron);
+    asm;
+      _m_ldabsx @r1
+      sta &fe08
+      _m_ldabsx @r2
+      sta &fe09
+    endasm;
+  endif;
+endfunction;
+
+// init python state and draw python at initial position
+function init_and_draw_python(x:byte, y:byte, len:byte);
+  tailtrail=0; headtrail=len<<1;
+  state=PYTHON_STOPPED;
+  headx=x; heady=y;
+  putsprite12x16(headx, heady, @head_right_12x16x2_sprites); // head
+  while (len);
+    x=x-4;
+    putsprite4x16(x, heady, @body_right_4x16x3_sprites+2); // (+2!) body
+    len=len-1;
+  endwhile;
+  while (len<headtrail); // set up initial python trail
+    ?(@python_trail+len)=PYTHON_RIGHT;
+    len=len+1;
+  endwhile;
+  tailx=x-4; taily=heady;
+  putsprite8x16(tailx, taily, @tail_right_8x16x2_sprites); // tail
+  headcornertype=CORNER_NONE;
+  headcornerstate=0; tailcornerstate=0;
+endfunction;
+
+// wait until the best time to redraw the python head
+function sync_head();
+  if (heady<BOUNDARY);
+    wait_rtc();
+  else;
+    wait_vsync();
+  endif;
+endfunction;
+
+// wait until the best time to redraw the python tail
+function sync_tail();
+  if ((heady>=BOUNDARY) and (taily<BOUNDARY));
+    wait_rtc();
+  else;
+    if ((heady<BOUNDARY) and (taily>=BOUNDARY));
+      wait_vsync();
+    endif;
+  endif;
+endfunction;
+
+// draw selected corner piece for the python head when making a turn
+function draw_head_corner(corner_spr:word, offs:byte);
+  putsprite8x16(headcornerx, headcornery, corner_spr+offs);
+endfunction;
+
+// move python head up or down, and update its tail as well (according to the trail)
+function move_python_UD(dir:byte, offs1:int8, offs2:int8, ct1:byte, ct2:byte, head_spr:word, ct1_head_spr:word, ct1_corner_spr:word, ct2_head_spr:word, ct2_corner_spr:word, body_spr:word);
+  declare addr:word;
+  addr=@python_trail+headtrail;
+  sync_head();
+  debugbars(&63, &35); // bg=blue
+  if (headcornertype==ct1);
+    if (headcornerstate==0); // first corner 'frame'
+      putsprite12x16(headx, heady, ct1_head_spr); // erase head at old pos
+      draw_head_corner(ct1_corner_spr, 0); // draw first corner 'frame'
+    else;
+      putsprite8x16(headx, heady, head_spr); // erase head at old pos
+      draw_head_corner(ct1_corner_spr, headcornerstate-2); // erase old corner 'frame'
+      draw_head_corner(ct1_corner_spr, headcornerstate); // draw new corner 'frame'
+    endif;
+    ?addr=ct1; // add move to trail
+  else;
+    if (headcornertype==ct2);
+      if (headcornerstate==0); // first corner 'frame'
+        putsprite12x16(headx, heady, ct2_head_spr); // erase head at old pos
+        draw_head_corner(ct2_corner_spr, 0); // draw first corner 'frame'
+      else;
+        putsprite8x16(headx, heady, head_spr); // erase head at old pos
+        draw_head_corner(ct2_corner_spr, headcornerstate-2); // erase old corner 'frame'
+        draw_head_corner(ct2_corner_spr, headcornerstate); // draw new corner 'frame'
+      endif;
+      ?addr=ct2; // add move to trail
+    else; // regular movement up/down
+      putsprite8x16(headx, heady, head_spr); // erase head at old pos
+      if (heady and 7); // middle of tile
+        putsprite8x8(headx, heady+offs1, body_spr); // erase short body at old pos
+      endif;
+      ?addr=dir; // add move to trail
+    endif;
+  endif;
+  if (dir==PYTHON_DOWN); heady=heady+4;
+  else; heady=heady-4; endif;
+  putsprite8x16(headx, heady, head_spr); // draw head at new pos
+  if (headcornertype==CORNER_NONE);
+    if (heady and 7); // middle of tile
+      putsprite8x8(headx, heady+offs1, body_spr); // draw short body at new pos
+    else;
+      putsprite8x8(headx, heady+offs2, body_spr+2); // draw long body at new pos
+    endif;
+  else; // special corner: update corner 'frame' counter
+    headcornerstate=headcornerstate+2;
+    if (headcornerstate==8);
+      headcornertype=CORNER_NONE; // done with corner 'frames'
+    endif;
+  endif;
+  headtrail=headtrail+1;
+  debugbars(&73, &35); // bg=black
+  update_tail(1); // now redraw the python tail at the right moment
+  debugbars(&73, &35); // bg=black
+endfunction;
+
+// move python head left or right, and update its tail as well (according to the trail)
+function move_python_LR(dir:byte, offs1:int8, offs2:int8, ct1:byte, ct2:byte, head_spr:word, ct1_head_spr:word, ct1_corner_spr:word, ct2_head_spr:word, ct2_corner_spr:word, body_spr:word);
+  declare addr:word;
+  addr=@python_trail+headtrail;
+  sync_head();
+  debugbars(&63, &35); // bg=blue
+  if (headcornertype==ct1);
+    if (headcornerstate==0); // first corner 'frame'
+      putsprite8x16(headx, heady, ct1_head_spr); // erase head at old pos
+      draw_head_corner(ct1_corner_spr, 0); // draw first corner 'frame'
+    else;
+      putsprite12x16(headx, heady, head_spr); // erase head at old pos
+      draw_head_corner(ct1_corner_spr, headcornerstate-2); // erase old corner 'frame'
+      draw_head_corner(ct1_corner_spr, headcornerstate); // draw new corner 'frame'
+    endif;
+    ?addr=ct1; // add move to trail
+  else;
+    if (headcornertype==ct2);
+      if (headcornerstate==0); // first corner 'frame'
+        putsprite8x16(headx, heady, ct2_head_spr); // erase head at old pos
+        draw_head_corner(ct2_corner_spr, 0); // draw first corner 'frame'
+      else;
+        putsprite12x16(headx, heady, head_spr); // erase head at old pos
+        draw_head_corner(ct2_corner_spr, headcornerstate-2); // erase old corner 'frame'
+        draw_head_corner(ct2_corner_spr, headcornerstate); // draw new corner 'frame'
+      endif;
+      ?addr=ct2; // add move to trail
+    else; // regular movement left/right
+      putsprite12x16(headx, heady, head_spr); // erase head at old pos
+      if (headx and 3); // middle of tile
+        putsprite4x16(headx+offs1, heady, body_spr); // erase short body at old pos
+      endif;
+      ?addr=dir; // add move to trail
+    endif;
+  endif;
+  if (dir==PYTHON_RIGHT); headx=headx+2;
+  else; headx=headx-2; endif;
+  putsprite12x16(headx, heady, head_spr); // draw head at new pos
+  if (headcornertype==CORNER_NONE);
+    if (headx and 3); // middle of tile
+      putsprite4x16(headx+offs1, heady, body_spr); // draw short body at new pos
+    else;
+      putsprite4x16(headx+offs2, heady, body_spr+2); // draw long body at new pos
+    endif;
+  else; // special corner: update corner 'frame' counter
+    headcornerstate=headcornerstate+2;
+    if (headcornerstate==8);
+      headcornertype=CORNER_NONE; // done with corner 'frames'
+    endif;
+  endif;
+  headtrail=headtrail+1;
+  debugbars(&73, &35); // bg=black
+  update_tail(1); // now redraw the python tail at the right moment
+  debugbars(&73, &35); // bg=black
+endfunction;
+
+// move python right
+function python_right();
+  move_python_LR(PYTHON_RIGHT, -2, -4, CORNER_UP_RIGHT, CORNER_DOWN_RIGHT, @head_right_12x16x2_sprites, @head_up_8x16x1_sprites, @corner_up_right_8x16x8_sprites, @head_down_8x16x1_sprites, @corner_down_right_8x16x8_sprites, @body_right_4x16x3_sprites);
+  moved=1;
+endfunction;
+
+// move python left
+function python_left();
+  move_python_LR(PYTHON_LEFT, 6, 8, CORNER_UP_LEFT, CORNER_DOWN_LEFT, @head_left_12x16x2_sprites, @head_up_8x16x1_sprites, @corner_up_left_8x16x8_sprites, @head_down_8x16x1_sprites, @corner_down_left_8x16x8_sprites, @body_left_4x16x3_sprites);
+  moved=1;
+endfunction;
+
+// move python up
+function python_up();
+  move_python_UD(PYTHON_UP, 12, 16, CORNER_RIGHT_UP, CORNER_LEFT_UP, @head_up_8x16x1_sprites, @head_right_12x16x2_sprites, @corner_right_up_8x16x8_sprites, @head_left_12x16x2_sprites, @corner_left_up_8x16x8_sprites, @body_up_8x8x3_sprites);
+  moved=1;
+endfunction;
+
+// move python down
+function python_down();
+  move_python_UD(PYTHON_DOWN, -4, -8, CORNER_RIGHT_DOWN, CORNER_LEFT_DOWN, @head_down_8x16x1_sprites, @head_right_12x16x2_sprites, @corner_right_down_8x16x8_sprites, @head_left_12x16x2_sprites, @corner_left_down_8x16x8_sprites, @body_down_8x8x3_sprites);
+  moved=1;
+endfunction;
+
+// move python tail left or right, called from update_tail()
+function move_tail_LR(dir:byte, offs1:int8, offs2:int8, body_spr:word, tail_spr:word);
+  putsprite8x16(tailx, taily, tail_spr); // erase tail at old pos
+  if (tailx and 3); // middle of tile
+    putsprite4x16(tailx+offs1, taily, body_spr+4); // erase short body at old pos
+  else;  
+    putsprite4x16(tailx+offs2, taily, body_spr+2); // erase long body at old pos
+  endif;
+  if (dir==PYTHON_RIGHT); tailx=tailx+2;
+  else; tailx=tailx-2; endif;
+  putsprite8x16(tailx, taily, tail_spr); // draw tail at new pos
+  if (tailx and 3); // middle of tile
+    putsprite4x16(tailx+offs1, taily, body_spr+4); // draw short body at new pos
+  endif;
+  tailcornerstate=0;
+endfunction;
+
+// move python tail up or down, called from update_tail()
+function move_tail_UD(dir:byte, offs1:int8, offs2:int8, body_spr:word, tail_spr:word);
+  putsprite8x8(tailx, taily, tail_spr); // erase tail at old pos
+  if (taily and 7); // middle of tile
+    putsprite8x8(tailx, taily+offs1, body_spr+4); // erase short body at old pos
+  else;  
+    putsprite8x8(tailx, taily+offs2, body_spr+2); // erase long body at old pos
+  endif;
+  if (dir==PYTHON_UP); taily=taily-4;
+  else; taily=taily+4; endif;
+  putsprite8x8(tailx, taily, tail_spr); // draw tail at new pos
+  if (taily and 7); // middle of tile
+    putsprite8x8(tailx, taily+offs1, body_spr+4); // draw short body at new pos
+  endif;
+  tailcornerstate=0;
+endfunction;
+
+// draw selected corner piece for the python tail when making a turn
+function draw_tail_corner(corner_spr:word, offs:byte);
+  putsprite8x16(tailcornerx, tailcornery, corner_spr+offs);
+endfunction;
+
+// redraw the corner that the python tail is currently going through when moving up or down
+function move_tail_corner_UD(ctype:byte, offs1:int8, offs2:int8, offs3:int8, offs4:int8, offs5:int8, tail_spr:word, corner_spr:word);
+  if (tailcornerstate==0);
+    putsprite8x8(tailx, taily, tail_spr); // erase tail at old pos
+    tailcornerx=tailx+offs1; tailcornery=taily+offs2;
+    tailx=tailcornerx+offs3; taily=tailcornery+offs4;
+    draw_tail_corner(corner_spr, 6); // erase old corner
+    putsprite8x8(tailcornerx, tailcornery+offs5, tail_spr); // draw tail at new pos
+    draw_tail_corner(corner_spr, 8); // draw new corner
+  else;
+    if (tailcornerstate==2);
+      putsprite8x8(tailcornerx, tailcornery+offs5, tail_spr); // erase tail at old pos
+      draw_tail_corner(corner_spr, 8); // erase old corner
+      draw_tail_corner(corner_spr, 10); // draw new corner
+    else;
+      if (tailcornerstate<8);
+        draw_tail_corner(corner_spr, 6+tailcornerstate); // erase old corner
+        draw_tail_corner(corner_spr, 8+tailcornerstate); // draw new corner
+      endif;
+    endif;
+  endif;  
+  tailcornerstate=tailcornerstate+2;
+endfunction;
+
+// redraw the corner that the python tail is currently going through when moving left or right
+function move_tail_corner_LR(ctype:byte, offs1:int8, offs2:int8, offs3:int8, offs4:int8, offs5:int8, tail_spr:word, corner_spr:word);
+  if (tailcornerstate==0);
+    putsprite8x16(tailx, taily, tail_spr); // erase tail at old pos
+    tailcornerx=tailx+offs1; tailcornery=taily+offs2;
+    tailx=tailcornerx+offs3; taily=tailcornery+offs4;
+    draw_tail_corner(corner_spr, 6); // erase old corner
+    putsprite8x16(tailcornerx+offs5, tailcornery, tail_spr); // draw tail at new pos
+    draw_tail_corner(corner_spr, 8); // draw new corner
+  else;
+    if (tailcornerstate==2);
+      putsprite8x16(tailcornerx+offs5, tailcornery, tail_spr); // erase tail at old pos
+      draw_tail_corner(corner_spr, 8); // erase old corner
+      draw_tail_corner(corner_spr, 10); // draw new corner
+    else;
+      if (tailcornerstate<8);
+        draw_tail_corner(corner_spr, 6+tailcornerstate); // erase old corner
+        draw_tail_corner(corner_spr, 8+tailcornerstate); // draw new corner
+      endif;
+    endif;
+  endif;  
+  tailcornerstate=tailcornerstate+2;
+endfunction;
+
+// redraw python tail at the next best time (sync=1) or immediately (sync=0)
+function update_tail(sync:int8);
+  if (grow); // don't redraw tail when python is still growing
+    grow=grow-1;
+    return;
+  endif;
+
+  declare t:byte;
+  t=?(@python_trail+tailtrail); // get next movement type from python trail
+  tailtrail=tailtrail+1;
+
+  if (sync); sync_tail(); endif;
+  debugbars(&62, &25); // bg=cyan
+  if (t==PYTHON_RIGHT);
+    move_tail_LR(PYTHON_RIGHT, 2, 4, @body_right_4x16x3_sprites, @tail_right_8x16x2_sprites);
+    return;
+  endif;
+  if (t==PYTHON_LEFT);
+    move_tail_LR(PYTHON_LEFT, -2, -4, @body_left_4x16x3_sprites, @tail_left_8x16x2_sprites);
+    return;
+  endif;
+  if (t==PYTHON_UP);
+    move_tail_UD(PYTHON_UP, -4, -8, @body_up_8x8x3_sprites, @tail_up_8x8x1_sprites);
+    return;
+  endif;
+  if (t==PYTHON_DOWN);
+    move_tail_UD(PYTHON_DOWN, 4, 8, @body_down_8x8x3_sprites, @tail_down_8x8x1_sprites);
+    return;
+  endif;
+  if (t==CORNER_LEFT_UP);
+    move_tail_corner_LR(CORNER_LEFT_UP, -8, 0, 0, 0, 6, @tail_left_8x16x2_sprites, @corner_left_up_8x16x8_sprites);
+    return;
+  endif;
+  if (t==CORNER_LEFT_DOWN);
+    move_tail_corner_LR(CORNER_LEFT_DOWN, -8, 0, 0, 8, 6, @tail_left_8x16x2_sprites, @corner_left_down_8x16x8_sprites);
+    return;
+  endif;
+  if (t==CORNER_RIGHT_UP);
+    move_tail_corner_LR(CORNER_RIGHT_UP, 4, 0, 0, 0, -2, @tail_right_8x16x2_sprites, @corner_right_up_8x16x8_sprites);
+    return;
+  endif;
+  if (t==CORNER_RIGHT_DOWN);
+    move_tail_corner_LR(CORNER_RIGHT_DOWN, 4, 0, 0, 8, -2, @tail_right_8x16x2_sprites, @corner_right_down_8x16x8_sprites);
+    return;
+  endif;
+  if (t==CORNER_UP_RIGHT);
+    move_tail_corner_UD(CORNER_UP_RIGHT, 0, -16, 4, 0, 12, @tail_up_8x8x1_sprites, @corner_up_right_8x16x8_sprites);
+    return;
+  endif;
+  if (t==CORNER_UP_LEFT);
+    move_tail_corner_UD(CORNER_UP_LEFT, 0, -16, 0, 0, 12, @tail_up_8x8x1_sprites, @corner_up_left_8x16x8_sprites);
+    return;
+  endif;
+  if (t==CORNER_DOWN_RIGHT);
+    move_tail_corner_UD(CORNER_DOWN_RIGHT, 0, 8, 4, 0, -4, @tail_down_8x8x1_sprites, @corner_down_right_8x16x8_sprites);
+    return;
+  endif;
+  if (t==CORNER_DOWN_LEFT);
+    move_tail_corner_UD(CORNER_DOWN_LEFT, 0, 8, 0, 0, -4, @tail_down_8x8x1_sprites, @corner_down_left_8x16x8_sprites);
+    return;
+  endif;
+endfunction;
+
+// play next note of the tune when it is time for it
+// -------------------------------------------------
+// hooked into vsync, so remember this is called from the interrupt handler every 1/50th of a second!
+// must not have parameters or local variables (because not called as regular e- function!)
+// must not affect global variables that may be used elsewhere
+// must not call other functions that do so, or that affect tmp storage, e.g. in zeropage
+// in other words: keep it short and simple here!! ;)
+function play_tune();
+  if (tune_enabled);
+    if (tune_counter);
+      tune_counter=tune_counter-1;
+    else;
+      tune_counter=tune_counter_reload;
+      if (?tune_index==-1); // restart tune
+        tune_index=@tune_data;
+      endif;
+      if (?tune_index); // not a pause (0), but a regular pitch value
+        qsound(1, ?tune_index, tune_note_len);
+      endif;
+      tune_index=tune_index+1;
+    endif;
+  endif;
+endfunction;
+
+// update the in-game timer when it is time for it
+// -----------------------------------------------
+// hooked into rtc, so remember this is called from the interrupt handler every 1/50th of a second!
+// must not have parameters or local variables (because not called as regular e- function!)
+// must not affect global variables that may be used elsewhere
+// must not call other functions that do so, or that affect tmp storage, e.g. in zeropage
+// in other words: keep it short and simple here!! ;)
+function time_tick();
+  if (time_enabled);
+    if (time_counter);
+      time_counter=time_counter-1;
+    else;
+      time_counter=time_counter_reload;
+      time=time-1;
+      time_needs_update=1; // redraw time number at the next suitable moment (instead of calling update_time() here!)
+    endif;
+  endif;
+endfunction;
+
+// redraw time number
+function update_time();
+  time_needs_update=0;
+  cursorto(17, 1);
+  if (time<10);
+    print 0; print 0;
+    cursorto(19, 1);
+  else;
+    if (time<100);
+      print 0;
+      cursorto(18, 1);
+    endif;
+  endif;  
+  print time;
+endfunction;
+
+// redraw lives number
+function update_lives();
+  cursorto(12, 1);
+  print lives;
+endfunction;
+
+// redraw level number
+function update_level();
+  cursorto(7, 1);
+  print level;
+endfunction;
+
+// redraw hiscore number (on intro screen)
+function update_hiscore();
+  declare x:byte;
+  x=9; // default position for hiscore with all 5 digits 
+  if (hiscore<10);
+    x=13;
+  else;
+    if (hiscore<100);
+      x=12;
+    else;
+      if (hiscore<1000);
+        x=11;
+      else;
+        if (hiscore<10000);
+          x=10;
+        endif;
+      endif;
+    endif;
+  endif;
+  cursorto(x, 11);
+  print hiscore;
+endfunction;
+
+// redraw score number
+function update_score();
+  declare x:byte;
+  x=0; // default position for score with all 5 digits
+  if (score<10);
+    x=4;
+  else;
+    if (score<100);
+      x=3;
+    else;
+      if (score<1000);
+        x=2;
+      else;
+        if (score<10000);
+          x=1;
+        endif;
+      endif;
+    endif;
+  endif;
+  cursorto(x, 1);
+  print score;
+endfunction;
+
+// check what is in front of the python (empty, wall, diamond, python itself) and act upon it
+function check_object(p:byte, dir:byte);    
+  if (p>=9); // not wall, but python or diamond
+    if (p and 15); // diamond
+      qsound(2, 160, 1); // play on channel 2 (!)
+      qsound(2, 200, 1); 
+      score=score+SCORE_DIAMOND;
+      n_diamonds=n_diamonds-1;
+      update_score();
+      grow=grow+GROW_SPEED; // collecting a diamond makes the python larger
+      // erase diamond after collecting it
+      if (dir==PYTHON_UP);
+        putsprite8x16(headx, heady-16, @diamond_8x16x1_sprites); // erase diamond
+      else;
+        if (dir==PYTHON_DOWN);
+          putsprite8x16(headx, heady+16, @diamond_8x16x1_sprites); // erase diamond
+        else;
+          if (dir==PYTHON_LEFT);
+            putsprite8x16(headx-8, heady, @diamond_8x16x1_sprites); // erase diamond
+          else; // PYTHON_RIGHT
+            putsprite8x16(headx+8, heady, @diamond_8x16x1_sprites); // erase diamond
+          endif;
+        endif;
+      endif;
+    else; // python itself; lose a life
+      stuck=1;
+    endif;
+  else; // wall
+    time_counter_reload=TIME_COUNTER2; // time goes faster when standing still at a wall (for too long)
+  endif;
+endfunction;
+
+// check if the python can actually move up
+function check_up();
+  declare p:byte;
+  p=getpixel(headx+3, heady-3);
+  if (p); // there is something in front of the python
+    check_object(p, PYTHON_UP);
+    p=getpixel(headx+3, heady-3);
+  endif;
+  if (p==0); // the way is clear
+    time_counter_reload=TIME_COUNTER;
+    if (state==PYTHON_UP);
+      python_up();
+    else;
+      if ((state==PYTHON_LEFT) or (state==PYTHON_RIGHT));
+        if (state==PYTHON_LEFT);
+          headcornertype=CORNER_LEFT_UP;
+        else;
+          headcornertype=CORNER_RIGHT_UP;
+        endif;
+        headcornerstate=0;
+        headcornerx=headx; headcornery=heady;
+        state=PYTHON_UP;
+        python_up();
+      endif;
+    endif;
+  endif;
+endfunction;
+
+// check if the python can actually move down
+function check_down();
+  declare p:byte;
+  p=getpixel(headx+3, heady+18);
+  if (p); // there is something in front of the python
+    check_object(p, PYTHON_DOWN);
+    p=getpixel(headx+3, heady+18);
+  endif;
+  if (p==0); // the way is clear
+    time_counter_reload=TIME_COUNTER;
+    if (state==PYTHON_DOWN);
+      python_down();
+    else;
+      if ((state==PYTHON_LEFT) or (state==PYTHON_RIGHT));
+        if (state==PYTHON_LEFT);
+          headcornertype=CORNER_LEFT_DOWN;
+        else;
+          headcornertype=CORNER_RIGHT_DOWN;
+        endif;
+        headcornerstate=0;
+        headcornerx=headx; headcornery=heady;
+        state=PYTHON_DOWN;
+        python_down();
+      endif;
+    endif;
+  endif;
+endfunction;
+
+// check if the python can actually move left
+function check_left();
+  declare p:byte;
+  p=getpixel(headx-2, heady+7);
+  if (p); // there is something in front of the python
+    check_object(p, PYTHON_LEFT);
+    p=getpixel(headx-2, heady+7);
+  endif;
+  if (p==0); // the way is clear
+    time_counter_reload=TIME_COUNTER;
+    if (state==PYTHON_LEFT);
+      python_left();
+    else;
+      if ((state==PYTHON_UP) or (state==PYTHON_DOWN));
+        if (state==PYTHON_UP);
+          headcornertype=CORNER_UP_LEFT;
+        else;
+          headcornertype=CORNER_DOWN_LEFT;
+        endif;
+        headcornerstate=0;
+        headcornerx=headx; headcornery=heady;
+        state=PYTHON_LEFT;
+        python_left();
+      endif;
+    endif;
+  endif;
+endfunction;
+
+// check if the python can actually move right
+function check_right();
+  declare p:byte;
+  p=getpixel(headx+9, heady+7);
+  if (p); // there is something in front of the python
+    check_object(p, PYTHON_RIGHT);
+    p=getpixel(headx+9, heady+7);
+  endif;
+  if (p==0); // the way is clear
+    time_counter_reload=TIME_COUNTER;
+    if (state==PYTHON_RIGHT);
+      python_right();
+    else;
+      if ((state==PYTHON_UP) or (state==PYTHON_DOWN));
+        if (state==PYTHON_UP);
+          headcornertype=CORNER_UP_RIGHT;
+        else;
+          headcornertype=CORNER_DOWN_RIGHT;
+        endif;
+        headcornerstate=0;
+        headcornerx=headx; headcornery=heady;
+        state=PYTHON_RIGHT;
+        python_right();
+      endif;
+    endif;
+  endif;
+endfunction;
+
+// auto move python one step in the current direction if it is not yet aligned to the grid of 8x16 wide pixels (tiles)
+function aligned_to_grid():int8;
+  if (headx and 7); // not aligned to tile horizontally
+    if (state==PYTHON_RIGHT); python_right();
+    else; python_left(); endif;
+    return 0;
+  endif;
+  if (heady and 15); // not aligned to tile vertically
+    if (state==PYTHON_DOWN); python_down();
+    else; python_up(); endif;
+    return 0;
+  endif;
+  return 1;
+endfunction;
+
+// used for maze drawing: convert ASCII char to tile ID
+function tile_id(c:byte):int8;
+  declare i:int8;
+  i=15; // number of tiles minus 1
+  while (i>=0);
+    if (?(@tiles+i)==c);
+      return i<<1; // found char, so return ID
+    endif;
+    i=i-1;
+  endwhile;
+  return -1; // ASCII char not found, will skip this tile while drawing the maze
+endfunction;
+
+// draw the maze and stats (score, lives, etc) for the current level
+function draw_level(lvl:byte);
+  declare x:byte, y:byte, i:int8, c:byte, t:word;
+  asm; // get address of level data from list of levels
+    _m_ldabsx @lvl
+    asl a
+    tay
+    lda levels,y
+    _m_stabsx @t+0
+    lda levels+1,y
+    _m_stabsx @t+1
+  endasm;
+  defcolour(1, 0); defcolour(2, 0); defcolour(3, 0); // palette off
+  vdu(12); // CLS
+  if (lvl); // show all stats for all levels except for the intro screen ('level 0')
+    print_font_str_at(0, 0, @str_score);
+    print_font_str_at(0, 8, @str_00000);
+    update_score();
+    print_font_str_at(128, 0, @str_time);
+    update_time();
+    print_font_str_at(48, 0, @str_level);
+    update_level();
+    print_font_str_at(80, 0, @str_lives);
+    update_lives();
+  else; // show info on intro screen ('level 0')
+    print_font_str_at(56, 40, @str_nameofgame);
+    print_font_str_at(48, 120, @str_left);
+    print_font_str_at(48, 136, @str_right);
+    print_font_str_at(48, 152, @str_up);
+    print_font_str_at(48, 168, @str_down);
+    print_font_str_at(48, 184, @str_musiconoff);
+    print_font_str_at(32, 208, @str_spacetoplay);
+    print_font_str_at(24, 244, @str_copyright);
+    print_font_str_at(48, 88, @str_hiscore);
+    print_font_str_at(72, 88, @str_00000);
+    update_hiscore();
+  endif;
+
+  // draw the actual maze: 15 rows of 20 tiles each; a tile is 8x16 wide pixels
+  y=16;
+  while (y); // i.e. 'while (y!=256)'
+    x=0;
+    while (x<160);
+      c=?t;
+      if (c=='*'); // * represents a diamond (special collectable tile)
+        putsprite8x16(x, y, @diamond_8x16x1_sprites);
+        n_diamonds=n_diamonds+1;
+      else;
+        i=tile_id(c);
+        if (i>=0); // regular tile
+          putsprite8x16(x, y, @tiles_8x16x16_sprites+i);
+        endif;
+      endif;
+      t=t+1;
+      x=x+8;
+    endwhile;
+    y=y+16;
+  endwhile;
+  defcolour(1, 1); defcolour(2, 2); defcolour(3, 7); // back to normal palette: black, red, green, white
+endfunction;
+
+// define custom font for digits 0..9, as UDGs using VDU 23, ...
+// these UDGs will occupy page &c00
+// Note: letters and symbols are sprites, not UDGs, because we don't want to deal with 'exploded fonts' and the dynamic memory area that occupies!
+function def_chars();
+  declare c:byte, b:byte, addr:word;
+  addr=@digits_sprites;
+  c=48; // '0'
+  while (c<58);
+    vdu(23); vdu(c);
+    b=0;
+    while (b<8);
+      vdu(?addr);
+      addr=addr+1;
+      b=b+1;
+    endwhile;
+    c=c+1;
+  endwhile;
+endfunction;
+
+// show blinking python at the start of each level, meaning: player get ready!
+function get_ready();
+  declare n:byte;
+  n=21; // needs to be odd so the blinking stops with a visible python
+  while (n);
+    if (n and 1); qsound(2, 120, 1); endif;
+    wait(5);
+    init_and_draw_python(PYTHON_START_X, PYTHON_START_Y, PYTHON_START_LEN);
+    n=n-1;
+  endwhile;
+endfunction;
+
+// shrink the python tail when you lose a life
+// this happens when:
+//   1. python collides with itself
+//   2. python gets stuck in a dead end of the maze
+//   3. time runs out
+function shrink_tail();
+  declare n:byte;
+  n=200;
+  grow=0;
+  time_enabled=0;
+  tune_enabled=0;
+  qsound(0, 5, 10); // 'crash' sound
+  wait(30);
+  while (tailtrail!=headtrail);
+    wait_vsync();
+    if (n and 1); qsound(2, n, 1); endif;
+    update_tail(0);
+    update_tail(0); // update twice without waiting for the best moment, so the tail shrinks fast enough
+    n=n-1;
+  endwhile;
+endfunction;
+
+// called when a level is finished
+// add remaining time to score
+function level_finished();
+  grow=0;
+  time_enabled=0;
+  tune_enabled=0;
+  wait(10);
+  qsound(2, 149, 3);
+  qsound(2, 165, 3);
+  qsound(2, 197, 6);
+  wait(30);
+  while (time>0);
+    time=time-1;
+    score=score+TIME_BONUS;
+    wait_rtc();
+    wait_rtc();
+    update_time();
+    update_score();
+    if ((time and 3)==0); qsound(2, 150, 1); endif;
+  endwhile;
+endfunction;
+
+// main game loop that controls everything else
+// this function does not return but loops forever
+function game_loop();
+  declare p:byte, q:byte;
+
+  time_enabled=0;
+  tune_enabled=0;
+  init();
+  hook_vsync(@_play_tune); //&&&& this is a quick hack; should really be able to use a function name as a value (=address of function) of type 'word'
+  hook_rtc(@_time_tick); //&&&& this is a quick hack; should really be able to use a function name as a value (=address of function) of type 'word'
+
+  while (1);
+    draw_level(0); // intro screen
+    while (key(KEY_START)==0); endwhile;
+    init_game();
+    while (lives>0);
+      init_level();
+      draw_level(1+((level-1) and 7));
+      get_ready();
+      state=PYTHON_RIGHT;
+      time_enabled=1;
+      tune_enabled=music_toggle;
+      while ((time>0) and (stuck==0) and n_diamonds);
+        if (key_music_counter);
+          key_music_counter=key_music_counter-1;
+        else;
+          key_music_counter=KEY_MUSIC_COUNTER;
+          if (key(KEY_MUSIC));
+            music_toggle=music_toggle xor 1;
+            tune_enabled=music_toggle;
+          endif;
+        endif;
+        if (aligned_to_grid());
+          moved=0;
+          if (key(KEY_LEFT) and (state!=PYTHON_RIGHT));
+            check_left();
+          else;
+            if (key(KEY_RIGHT) and (state!=PYTHON_LEFT));
+              check_right();
+            else;
+              if (key(KEY_UP) and (state!=PYTHON_DOWN));
+                check_up();
+              else;
+                if (key(KEY_DOWN) and (state!=PYTHON_UP));
+                  check_down();
+                endif;
+              endif;
+            endif;
+          endif;
+          if (moved==0);
+            if (state==PYTHON_LEFT);
+              check_left();
+            else;
+              if (state==PYTHON_RIGHT);
+                check_right();
+              else;
+                if (state==PYTHON_UP);
+                  check_up();
+                else;
+                  if (state==PYTHON_DOWN);
+                    check_down();
+                  endif;
+                endif;
+              endif;
+            endif;
+          endif;
+        endif;
+        if (time_needs_update);
+          update_time();
+        endif;
+        if (time<20); // tune plays very quickly
+          tune_counter_reload=TUNE_COUNTER3;
+          tune_note_len=NOTE_LEN3;
+        else;
+          if (time<50); // tune plays quickly
+            tune_counter_reload=TUNE_COUNTER2;
+            tune_note_len=NOTE_LEN2;
+          endif;
+        endif;
+        // check if python is stuck in a dead end
+        p=0;
+        q=getpixel(headx, heady-3); // 'up', q==8 for red pixel (wall)
+        if (q<9); // wall or nothing
+          p=p or q;
+        endif;
+        q=getpixel(headx+3, heady+18); // 'down', q==1 for red pixel (wall)
+        if (q<9); // wall or nothing
+          p=p or q;
+        endif;
+        q=getpixel(headx-2, heady+7); // 'left', q==2 for red pixel (wall)
+        if (q<9); // wall or nothing
+          p=p or q;
+        endif;
+        q=getpixel(headx+9, heady+7); // 'right', q==4 for red pixel (wall)
+        if (q<9); // wall or nothing
+          p=p or q;
+        endif;
+        if ((p==7) or (p==11) or (p==13) or (p==14));
+          stuck=1; // there is a wall in front, to the left and to the right of the python head, i.e. it is stuck in a dead end
+        endif;
+      endwhile;
+      // finished level or lost a life
+      if (n_diamonds==0); // finished level
+        level_finished();
+        if ((level and 7)==0); // just finished level 8, 16, 24, ...
+          lives=lives+1;
+          score=score+FINISH_BONUS;
+          start_time=start_time-TIME_DECREMENT; // less time for higher levels
+        endif;
+        level=level+1;
+      else; // lost a life
+        lives=lives-1;
+        shrink_tail();
+      endif;
+    endwhile;
+    // game over
+    if (score>hiscore); 
+      hiscore=score; // new hiscore
+    endif;
+  endwhile; // loops forever
+  // function does NOT return!
+endfunction;
+
+// main function, default entry point for any e- program
+function main();
+  asm;
+    print "#### Free bytes:", &5800-*
+    if (*>&5800): error "Compiled binary too large!": endif
+  endasm;
+
+  //###########################################################
+  // Everything beyond this point is used only once/temporarily
+  // and may extend into screen RAM even after relocation
+  // Beware, you are now entering the Twilight Zone...
+  //###########################################################
+
+  reloc_down(&400, @tiles_8x16x16, 512);
+  reloc_down(&600, @corner_up_left_8x16x8, 512); // also includes: corner_up_right_8x16x8
+  reloc_down(&a00, @corner_down_left_8x16x8, 512); // also includes: corner_down_right_8x16x8
+
+  game_loop(); // does NOT return
+
+  return; // just to be sure
+
+  // data that is moved low down in available RAM
+  asm;
+  {
+  .*tiles_8x16x16
+    incbin "gfx/tiles_8x16x16.bin" ; 512 bytes moved down to &400!!
+
+  .*corner_up_left_8x16x8
+    incbin "gfx/corner_up_left_8x16x8.bin" ; 256 bytes moved down to &600!!
+
+  .*corner_up_right_8x16x8
+    incbin "gfx/corner_up_right_8x16x8.bin" ; 256 bytes moved down to &700!!
+
+  .*corner_down_left_8x16x8
+    incbin "gfx/corner_down_left_8x16x8.bin" ; 256 bytes moved down to &A00!!
+
+  .*corner_down_right_8x16x8
+    incbin "gfx/corner_down_right_8x16x8.bin" ; 256 bytes moved down to &B00!!
+  }
+  endasm;
+endfunction; // main()
+
+// move a block of memory (down only!)
+// note: function may not be available anymore after the init phase of the game
+function reloc_down(dst:word, src:word, len:int);
+  while (len);
+    ?dst=?src;
+    dst=dst+1;
+    src=src+1;
+    len=len-1;
+  endwhile;
+endfunction;
+

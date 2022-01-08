@@ -1,0 +1,11 @@
+*BASIC
+*FX200,3
+*KEY0*TAPE|MFORK%=0TO&5100STEP4:K%!&E00=K%!&2000:NEXTK%:CALL&E00|M
+MODE6
+HIMEM=&8000
+VDU28,0,24,39,14
+REM Loading Python, please wait...
+REM ------------------------------
+VDU28,0,24,39,16
+*LOAD 0xC0DE 2000
+*FX138,0,128

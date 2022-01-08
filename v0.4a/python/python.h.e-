@@ -1,0 +1,153 @@
+// Python
+// Game for Acorn Electron and BBC Micro
+// Written in e-, compiled to 6502 asm, assembled with BeebAsm
+// Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+//
+// Header defining and including everything else
+//
+
+#define DEBUGBARS 0 // 0/1, rasterbars for debugging flicker free sprite plotting (Elk only, ignored on Beeb)
+
+#define KEY_UP 		-73 	// :
+#define KEY_DOWN 	-105 	// /
+#define KEY_LEFT 	-98 	// Z
+#define KEY_RIGHT -67 	// X
+#define KEY_START -99   // <SPACE>
+#define KEY_MUSIC -102  // M
+
+#define START_LIVES 5
+#define START_LEVEL 1
+#define SCORE_DIAMOND 5
+#define TIME_BONUS 10
+#define START_TIME 100
+#define TIME_DECREMENT 10
+#define FINISH_BONUS 1000
+#define GROW_SPEED 8
+#define PYTHON_START_X 128
+#define PYTHON_START_Y 224
+#define PYTHON_START_LEN 10
+
+#define SOUND_VOLUME -12 // (Beeb only, -15 is loudest)
+#define MUSIC_VOLUME -10 // (Beeb only, -15 is loudest)
+#define NOTE_LEN 4
+#define TUNE_COUNTER 10 // 4/20ths note = 10/50ths, normal tempo
+#define NOTE_LEN2 3
+#define TUNE_COUNTER2 8 // 3/20ths note = 7.5/50ths --> 8/50ths, faster tempo
+#define NOTE_LEN3 2
+#define TUNE_COUNTER3 5 // 2/20ths note = 5/50ths, fastest tempo
+
+#define KEY_MUSIC_COUNTER 16        
+#define TIME_COUNTER 50 // normal time 50/50ths
+#define TIME_COUNTER2 8 // fast time (when standing still at a wall)
+
+#define BOUNDARY 108 // used for flicker free sprite plotting
+
+
+//################## SYSTEM LIBRARIES ##########################
+
+#define SYS_PLUS asm "if 0" // "if 0": disable extra sys functions, "if 1": enable
+#include "../lib/sys.e-"
+
+#define TXT_PLUS asm "if 0" // "if 0": disable extra txt functions, "if 1": enable
+#include "../lib/txt.e-"
+
+#define GFX_PLUS asm "if 0" // "if 0": disable extra gfx functions, "if 1": enable
+#include "../lib/gfx.e-"
+
+#include "../lib/spr.e-"
+
+#include "../lib/snd.e-"
+
+//################## END SYSTEM LIBRARIES ##########################
+
+
+#include "python-data.e-"
+
+declare main();
+declare init();
+declare init_and_draw_python(byte, byte, byte);
+declare python_right();
+declare python_left();
+declare python_up();
+declare python_down();
+declare check_up();
+declare check_down();
+declare check_left();
+declare check_right();
+declare update_tail(int8);
+declare move_python_LR(byte, int8, int8, byte, byte, word, word, word, word, word, word);
+declare move_python_UD(byte, int8, int8, byte, byte, word, word, word, word, word, word);
+declare move_tail_LR(byte, int8, int8, word, word);
+declare move_tail_UD(byte, int8, int8, word, word);
+declare move_tail_corner_LR(byte, int8, int8, int8, int8, int8, word, word);
+declare move_tail_corner_UD(byte, int8, int8, int8, int8, int8, word, word);
+declare sync_head();
+declare sync_tail();
+declare aligned_to_grid():int8;
+declare debugbars(byte, byte);
+declare check_object(byte, byte);    
+declare tile_id(byte):int8;
+declare draw_level(byte);
+declare play_tune();
+declare update_score();
+declare update_time();
+declare time_tick();
+declare update_lives();
+declare update_level();
+declare def_chars();
+declare init_game();
+declare init_level();
+declare get_ready();
+declare shrink_tail();
+declare level_finished();
+declare game_loop();
+declare print_font_str_at(byte, byte, word);
+declare reloc_down(word, word, int);
+declare update_hiscore();
+declare draw_head_corner(word, byte);
+declare draw_tail_corner(word, byte);
+
+#define CORNER_NONE       0
+#define CORNER_RIGHT_UP   1
+#define CORNER_RIGHT_DOWN 2
+#define CORNER_LEFT_UP    3
+#define CORNER_LEFT_DOWN  4
+#define CORNER_UP_LEFT    5
+#define CORNER_UP_RIGHT   6
+#define CORNER_DOWN_LEFT  7
+#define CORNER_DOWN_RIGHT 8
+
+// must not overlap with CORNER_XXX
+#define PYTHON_STOPPED 128
+#define PYTHON_LEFT    129
+#define PYTHON_RIGHT   130
+#define PYTHON_UP      131
+#define PYTHON_DOWN    132
+
+declare state:byte;
+declare headx:byte, heady:byte;
+declare tailx:byte, taily:byte;
+declare headcornerx:byte, headcornery:byte, headcornertype:byte, headcornerstate:byte;
+declare tailcornerx:byte, tailcornery:byte, tailcornerstate:byte;
+declare tailtrail:byte, headtrail:byte;
+declare grow:byte;
+declare moved:byte;
+declare tune_counter:byte;
+declare tune_index:word;
+declare score:word;
+declare time:int8;
+declare start_time:int8;
+declare time_counter:byte;
+declare time_needs_update:byte;
+declare lives:byte;
+declare level:byte;
+declare time_counter_reload:byte;
+declare stuck:int8;
+declare time_enabled:int8;
+declare tune_enabled:int8;
+declare tune_counter_reload:byte;
+declare tune_note_len:byte;
+declare n_diamonds:byte;
+declare music_toggle:byte;
+declare hiscore:word;
+declare key_music_counter:byte;

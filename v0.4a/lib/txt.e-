@@ -1,0 +1,114 @@
+// Text module
+// Part of e- compiler package
+// Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+//
+// call txt_init() before use
+//
+
+declare txt_init();
+
+declare cursorto(byte, byte);
+declare vdu(byte);
+declare cursor(byte);
+declare defcolour(byte, byte);
+declare key(byte):int8;
+
+declare __TXT_PLUS_BEGIN__();
+declare __TXT_PLUS_END__();
+
+declare printstr(word);
+declare colour(byte);
+
+function txt_init();
+  // nothing
+endfunction;
+
+function key(k:byte):int8;
+  asm;
+    txa: pha
+    _m_ldabsx @k
+    tax
+    ldy #&ff
+    lda #&81
+    jsr &fff4 ; OSBYTE
+    pla: tax
+    tya
+    _m_stabsx _key_result ; &&&& quick hack: should be something like: _m_stabsx @@result
+  endasm;
+endfunction;
+
+function defcolour(lg:byte, ph:byte);
+  vdu(19);
+  vdu(lg);
+  vdu(ph);
+  vdu(0);
+  vdu(0);
+  vdu(0);
+endfunction;
+
+function cursorto(x:byte, y:byte);
+  vdu(31);
+  vdu(x);
+  vdu(y);
+endfunction;
+
+function vdu(b:byte);
+  asm;
+    _m_ldabsx @b
+    jmp &ffee ; jmp! OSWRCH (preserves A,X,Y) rts from there
+  endasm;
+endfunction;
+
+function cursor(b:byte);
+  vdu(23); vdu(1); vdu(!!b and 1);
+  declare i:uint8;
+  i=0; while (i<7); vdu(0); i=i+1; endwhile;
+endfunction;
+
+
+
+
+
+
+
+
+
+
+
+
+//#####################################################################
+
+function __TXT_PLUS_BEGIN__();
+  TXT_PLUS;
+endfunction;
+
+function colour(c:byte);
+  vdu(17);
+  vdu(c);
+endfunction;
+
+function printstr(s:word);
+  asm;
+    _m_ldabsx @s+0
+    sta @0
+    _m_ldabsx @s+1
+    sta @1
+    ldy #0
+    {
+      .loop
+        lda (@0),y
+        beq end
+        jsr &ffee ; OSWRCH (preserves A,X,Y)
+        iny
+        bne loop
+      .end
+    }
+  endasm;
+endfunction;
+
+function __TXT_PLUS_END__();
+  asm "endif";
+endfunction;
+
+//#####################################################################
+

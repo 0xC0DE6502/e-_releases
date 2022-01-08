@@ -1,0 +1,628 @@
+// System module
+// Part of e- compiler package
+// Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+//
+// call sys_init() before use
+//
+
+declare sys_init();
+declare wait_vsync();
+declare wait_rtc();
+declare hook_vsync(word);
+declare unhook_vsync();
+declare hook_rtc(word);
+declare unhook_rtc();
+declare wait(uint16);
+
+declare __SYS_PLUS_BEGIN__();
+declare __SYS_PLUS_END__();
+
+declare sys(word);
+
+declare __sys_vsync_hook:word;
+declare __sys_rtc_hook:word;
+declare __sys_is_electron:int8;
+declare __sys_bbctimer:byte;
+
+declare __sys_internal();
+
+// don't call this function (won't hurt if you do)
+function __sys_internal();
+  return; // just in case
+
+  asm;
+  {
+__P__=*
+
+  org &80
+.*_e_t0 skip 1
+.*_e_t1 skip 1
+.*_e_t2 skip 1
+.*_e_t3 skip 1
+.*_e_t4 skip 1
+.*_e_t5 skip 1
+.*_e_t6 skip 1
+.*_e_t7 skip 1
+.*_e_t8 skip 1
+.*_e_t9 skip 1
+
+.*rtc_counter skip 1
+.*vsync_counter skip 1
+
+  org __P__
+
+; see: https://llx.com/Neil/a2/mult.html
+; reads 2 positive 8bit numbers directly from stack and leaves 8bit (truncated!) result in A
+;&&&&TODO: check validity of this function
+.*_e_mult8x8
+{
+  stx @0
+  tsx
+  lda &104,x ; operand 1
+  sta @1
+  lda &103,x ; operand 2
+  sta @2
+  lda #0
+  ldy #8
+.loop
+  lsr @2
+  bcc rot
+  clc
+  adc @1
+.rot
+  ror a
+  ror @3 ; lsb of result (A will be msb of result)
+  dey
+  bne loop
+  lda @3 ; return lsb, discard msb (previously in A)
+  ldx @0
+  rts
+}
+
+; see: https://llx.com/Neil/a2/mult.html
+; reads 2 positive 16bit numbers directly from stack and leaves 16bit (truncated!) result in YA
+;&&&&TODO: check validity of this function
+.*_e_mult16x16
+{
+  stx @0
+  tsx
+  lda &106,x ; msb of operand 1
+  sta @2
+  lda &105,x ; lsb of operand 1
+  sta @1
+  lda &104,x ; msb of operand 2
+  sta @4
+  lda &103,x ; lsb of operand 2
+  sta @3
+.*_e_cont_mult16x16
+  lda #0
+  sta @7
+  ldy #16
+.loop
+  lsr @4
+  ror @3
+  bcc rot
+  pha
+  clc
+  lda @7
+  adc @1
+  sta @7
+  pla
+  adc @2
+.rot
+  ror a
+  ror @7
+  ror @6
+  ror @5
+  dey
+  bne loop
+  ldy @6 ; return lsw in YA, discard msw
+  lda @5
+  ldx @0
+  rts
+}
+
+; Y==0 --> msb of operand 1 = 0
+; Y==1 --> msb of operand 1 is sign extension of lsb
+;&&&&TODO: check validity of this function
+.*_e_mult8x16
+{
+  stx @0
+  tsx
+  lda &105,x ; operand 1 (8bit)
+  cpy #0
+  beq store
+  ; do sign extend
+  dey ; Y=0
+  cmp #&80
+  bcc store
+  dey ; Y=&ff
+.store
+  sty @2 ; virtual msb of operand 1
+  sta @1 ; lsb of operand 1
+  lda &104,x ; msb of operand 2
+  sta @4
+  lda &103,x ; lsb of operand 2
+  sta @3
+  jmp _e_cont_mult16x16
+}
+
+; Y==0 --> msb of operand 2 = 0
+; Y==1 --> msb of operand 2 is sign extension of lsb
+;&&&&TODO: check validity of this function
+.*_e_mult16x8
+{
+  stx @0
+  tsx
+  lda &103,x ; operand 2 (8bit)
+  cpy #0
+  beq store
+  ; do sign extend
+  dey ; Y=0
+  cmp #&80
+  bcc store
+  dey ; Y=&ff
+.store
+  sty @4 ; virtual msb of operand 2
+  sta @3 ; lsb of operand 2
+  lda &105,x ; msb of operand 1
+  sta @2
+  lda &104,x ; lsb of operand 1
+  sta @1
+  jmp _e_cont_mult16x16
+}
+
+; A = signed 8bit number
+.*_e_print_int8
+{
+  tay ; test 8bit number
+  sta @2 ; remember (sign of) original number
+  bpl is_pos
+  ; make negative number positive
+  eor #&ff
+  clc
+  adc #1
+.is_pos
+  sta @0 ; remember number (made positive)  
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @1 ; collecting decimal digit
+  ldy #8 ; loop counter (8 bits)
+.loop
+  asl @0
+  rol @1
+  lda @1
+  sec: sbc #10
+  bcc less10
+  sta @1
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @1
+  ora #'0'
+  pha
+  lda @0
+  bne div10
+
+  lda @2 ; was neg?
+  bpl is_pos2
+  lda #'-'
+  jsr &ffee ; OSWRCH
+.is_pos2
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+; A = unsigned 8bit number
+.*_e_print_uint8
+{
+  sta @0 ; remember number
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @1 ; collecting decimal digit
+  ldy #8 ; loop counter (8 bits)
+.loop
+  asl @0
+  rol @1
+  lda @1
+  sec: sbc #10
+  bcc less10
+  sta @1
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @1
+  ora #'0'
+  pha
+  lda @0
+  bne div10
+
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+; AY = signed 16bit number
+.*_e_print_int16
+{
+  cmp #&80
+  sta @3 ; remember (sign of) original number (msb)
+  bcc is_pos
+  ; make negative number positive
+  ; C=1
+  tya
+  eor #&ff
+  adc #0 ; add 1 (because C=1)
+  tay
+  lda @3
+  eor #&ff
+  adc #0
+.is_pos
+  sty @0 ; remember number (made positive), lsb
+  sta @1 ; msb
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @2 ; collecting decimal digit
+  ldy #16 ; loop counter (16 bits)
+.loop
+  asl @0
+  rol @1
+  rol @2
+  lda @2
+  sec: sbc #10
+  bcc less10
+  sta @2
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @2
+  ora #'0'
+  pha
+  lda @0
+  ora @1
+  bne div10
+
+  lda @3 ; was neg?
+  bpl is_pos2
+  lda #'-'
+  jsr &ffee ; OSWRCH
+.is_pos2
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+; AY = unsigned 16bit number
+.*_e_print_uint16
+{
+  sty @0 ; lsb
+  sta @1 ; msb
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @2 ; collecting decimal digit
+  ldy #16 ; loop counter (16 bits)
+.loop
+  asl @0
+  rol @1
+  rol @2
+  lda @2
+  sec: sbc #10
+  bcc less10
+  sta @2
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @2
+  ora #'0'
+  pha
+  lda @0
+  ora @1
+  bne div10
+
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+  }
+  endasm;
+endfunction;
+
+// in 1/50ths of a second (rounded up to next vsync, unless cs==0)
+function wait(cs:uint16);
+  if (cs);
+    wait_vsync();
+    while (cs);
+      wait_vsync();
+      cs=cs-1;
+    endwhile;
+  endif;
+endfunction;
+
+function hook_vsync(f:word);
+  if (__sys_vsync_hook); return; endif; // hook already defined
+  asm "php: sei";
+  __sys_vsync_hook=f;
+  asm "plp";
+endfunction;
+
+function unhook_vsync();
+  asm "php: sei";
+  __sys_vsync_hook=0;
+  asm "plp";
+endfunction;
+
+function hook_rtc(f:word);
+  if (__sys_rtc_hook); return; endif; // hook already defined
+  asm "php: sei";
+  __sys_rtc_hook=f;
+  asm "plp";
+endfunction;
+
+function unhook_rtc();
+  asm "php: sei";
+  __sys_rtc_hook=0;
+  asm "plp";
+endfunction;
+
+//&&&& there should also be a sys_exit() to unhook IRQ1V/etc
+function sys_init();
+  unhook_vsync();
+  unhook_rtc();
+  asm;
+  {
+  php
+  sei
+  lda &204
+  sta sm_org_irq1v+1
+  lda &205
+  sta sm_org_irq1v+2
+  lda #0
+  ldx #1
+  stx @__sys_is_electron ; assume Acorn Electron
+  jsr &fff4 ; OSBYTE 0 determines host machine: X==0 ==> Electron, X<>0 ==> BBC or something else (assume BBC or similar)
+  txa
+  beq elk ; no need to change flag (default = 1 = Electron), continue
+  dec @__sys_is_electron ; set to 0, because this is NOT an Electron, assume BBC
+  ; beeb
+  ; user timer 1
+  sei
+  lda #&ff
+  sta &fe64
+  sta &fe65
+  lda #0
+  sta &fe6b ; TIMER 1 in one shot mode
+  sta @__sys_bbctimer
+  lda #%11000000 ; we only want to service these interrupts: TIMER1 (bit6)
+  sta &fe6e ; IER User VIA
+  lda #lo(beeb_irq_handler)  
+  sta &204
+  lda #hi(beeb_irq_handler)
+  sta &205
+  plp
+  rts
+
+.elk
+  sei
+  lda #%00001111 ; RTC, VSYNC
+  sta &fe00 ; IER
+  lda #lo(elk_irq_handler)  
+  sta &204
+  lda #hi(elk_irq_handler)
+  sta &205
+  plp
+  rts
+
+.elk_irq_handler 
+  lda &fe00
+  and #4
+  beq check_rtc
+
+  inc vsync_counter
+
+  jmp check_vsync_hook
+
+.check_rtc
+  lda &fe00
+  and #8
+  beq exit_int
+
+  inc rtc_counter
+
+  jmp check_rtc_hook
+
+.exit_int
+.sm_org_irq1v
+  jmp &ffff ; SELFMOD  
+
+.beeb_irq_handler
+  lda &fe4d ; get IFR of System VIA
+  and #2 ; check bit1 (vsync interrupt CA1)
+  beq check_timer1
+
+  ; vsync  
+  ; set TIMER1 (one shot) to fire at approx 100th scanline
+  lda #lo(128*64)
+  sta &fe64
+  lda #hi(128*64)
+  sta &fe65
+
+  ; set timer type
+  lsr @__sys_bbctimer ;=0
+
+  beq exit_int ; jump always
+
+.check_timer1
+  lda &fe6d ; get IFR of User VIA
+  and #&40 ; check bit6 (TIMER1)
+  beq exit_int
+
+  lda #&40
+  sta &fe6d ; clear int
+
+  lda @__sys_bbctimer ; check timer type
+  bne beeb_vsync
+
+  ; 'rtc' ~100th scanline
+  inc rtc_counter
+
+  ; set TIMER1 (one shot) to fire after approx 156 scanlines
+  lda #lo(156*64)
+  sta &fe64
+  lda #hi(156*64)
+  sta &fe65
+
+  ; set timer type
+  sec
+  rol @__sys_bbctimer ;=1
+
+  jmp check_rtc_hook
+
+.beeb_vsync
+  ; 'vsync' ~256th scanline
+  inc vsync_counter
+  
+  ; fall through to check_vsync_hook!
+
+.check_vsync_hook
+  lda @__sys_vsync_hook+1
+  ora @__sys_vsync_hook+0
+  bne vsync_hook_defined
+  jmp exit_int ; hook not defined
+.vsync_hook_defined  
+  lda @__sys_vsync_hook+0
+  sta sm_hook+1
+  lda @__sys_vsync_hook+1
+  sta sm_hook+2
+
+  jmp exec_hook
+
+.check_rtc_hook
+  lda @__sys_rtc_hook+1
+  ora @__sys_rtc_hook+0
+  bne rtc_hook_defined
+  jmp exit_int ; hook not defined
+.rtc_hook_defined
+  lda @__sys_rtc_hook+0
+  sta sm_hook+1
+  lda @__sys_rtc_hook+1
+  sta sm_hook+2
+
+.exec_hook
+  txa: pha: tya: pha
+  lda @0: pha
+  lda @1: pha
+  lda @2: pha
+  lda @3: pha
+  lda @4: pha
+  lda @5: pha
+  lda @6: pha
+  lda @7: pha
+  lda @8: pha
+  lda @9: pha
+.sm_hook
+  jsr &ffff ; SELFMOD
+  pla: sta @9
+  pla: sta @8
+  pla: sta @7
+  pla: sta @6
+  pla: sta @5
+  pla: sta @4
+  pla: sta @3
+  pla: sta @2
+  pla: sta @1
+  pla: sta @0
+  pla: tay: pla: tax
+
+  jmp exit_int
+
+  }
+  endasm;
+endfunction;
+
+function wait_vsync();
+  asm;
+  {
+  lda vsync_counter
+.wait
+  cmp vsync_counter  
+  beq wait
+  }
+  endasm;
+endfunction;
+
+function wait_rtc();
+  asm;
+  {
+  lda rtc_counter
+.wait
+  cmp rtc_counter  
+  beq wait
+  }
+  endasm;
+endfunction;
+
+
+
+
+
+
+
+
+
+
+
+//#####################################################################
+
+function __SYS_PLUS_BEGIN__();
+  SYS_PLUS;
+endfunction;
+
+// pass CR-string to CLI for execution
+function sys(s:word);
+  asm;
+    txa: pha
+    _m_ldabsx @s+1 ; hi
+    tay
+    _m_ldabsx @s+0 ; lo
+    tax
+    jsr &fff7 ; OSCLI
+    pla: tax
+  endasm;
+endfunction;
+
+function __SYS_PLUS_END__();
+  asm "endif";
+endfunction;
+
+//#####################################################################
+

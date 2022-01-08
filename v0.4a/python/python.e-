@@ -777,7 +777,13 @@ function draw_level(lvl:byte);
     endwhile;
     y=y+16;
   endwhile;
-  defcolour(1, 1); defcolour(2, 2); defcolour(3, 7); // back to normal palette: black, red, green, white
+  // back to normal palette: black, <misc>, green, white
+  if (lvl and 7);
+    defcolour(1, lvl and 7); // vary colour of maze
+  else;
+    defcolour(1, 1); // default=red
+  endif;
+  defcolour(2, 2); defcolour(3, 7); 
 endfunction;
 
 // define custom font for digits 0..9, as UDGs using VDU 23, ...

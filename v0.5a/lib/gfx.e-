@@ -1,0 +1,255 @@
+// Graphics module
+// Part of e- compiler package
+// Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+//
+// call gfx_init() before use
+//
+
+#define getpixel __gfx_getpixel_mode_5
+
+declare gfx_init();
+declare mode(byte);
+
+declare __gfx_getpixel_mode_5(byte, byte):byte;
+declare __gfx_x:int, __gfx_y:int;
+declare __gfx_data();
+
+function gfx_init();
+  __gfx_x=0;
+  __gfx_y=0;
+endfunction;
+
+// MODE 5
+// no boundary checking
+function __gfx_getpixel_mode_5(_x:byte, _y:byte):byte; //&&&&fastcall! A=_x, Y=_y
+  declare x:byte, y:byte;
+  asm;
+    _m_stabsx @x
+    tya
+    _m_stabsx @y
+  endasm;
+
+  declare addr:word, mask:byte;
+
+  addr=x and %11111100; // also: byte (x) to word (addr)!
+  addr=addr<<1;
+
+  asm;
+    _m_ldabsx @y
+    tay
+    _m_ldabsx @addr+0
+    clc
+    adc mode_4_5_pixelrow_lo,y
+    _m_stabsx @addr+0
+    _m_ldabsx @addr+1
+    adc mode_4_5_pixelrow_hi,y
+    _m_stabsx @addr+1
+
+    _m_ldabsx @x
+    and #3
+    tay
+    lda __gfx_bitmask2bpp,y
+    _m_stabsx @mask
+  endasm;
+
+  return ?addr and mask;
+endfunction;
+
+function mode(_m:byte); //&&&&fastcall! A=_m
+  asm;
+    tay
+    lda #22
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    tya
+    jmp &ffee ; jmp! OSWRCH (preserves A,X,Y) rts from there
+  endasm;
+endfunction;
+
+// __gfx_data() does not have to be called!
+function __gfx_data();
+  return;
+  
+  asm;
+    .*__gfx_bitmask1bpp
+      equb %10000000
+      equb %01000000
+      equb %00100000
+      equb %00010000
+      equb %00001000
+      equb %00000100
+      equb %00000010
+      equb %00000001
+
+    .*__gfx_bitmask2bpp
+      equb %10001000
+      equb %01000100
+      equb %00100010
+      equb %00010001
+
+    .*mode_4_5_pixelrow_lo
+      for n,0,256-1
+        equb lo(&5800+320*(n div 8)+(n mod 8))
+      next ;n
+
+    .*mode_4_5_pixelrow_hi
+      for n,0,256-1
+        equb hi(&5800+320*(n div 8)+(n mod 8))
+      next ;n
+
+  endasm;
+endfunction;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//#####################################################################
+
+#ifdef GFX_PLUS // do we need extra Gfx functions?
+
+#define putpixel __gfx_putpixel_mode_4
+
+declare circle(int, int, int);
+declare moveto(int, int);
+declare lineto(int, int);
+declare array16_get(word, word):word;
+declare gcol(byte, byte);
+
+declare __gfx_putpixel_mode_4(int, int);
+declare __gfx_pixels8(int, int, int, int);
+
+function __gfx_pixels8(xc:int, yc:int, x:int, y:int);
+  declare xcpx:int, xcmx:int;
+  declare ycpy:int, ycmy:int;
+  declare xcpy:int, xcmy:int;
+  declare ycpx:int, ycmx:int;
+  xcpx=xc+x; xcmx=xc-x;
+  ycpy=yc+y; ycmy=yc-y;
+  xcpy=xc+y; xcmy=xc-y;
+  ycpx=yc+x; ycmx=yc-x;
+  putpixel(xcpx, ycpy);
+  putpixel(xcpx, ycmy);
+  putpixel(xcmx, ycpy);
+  putpixel(xcmx, ycmy);
+  putpixel(xcpy, ycpx);
+  putpixel(xcpy, ycmx);
+  putpixel(xcmy, ycpx);
+  putpixel(xcmy, ycmx);
+endfunction;
+
+function circle(xc:int, yc:int, r:int);
+  declare x:int, y:int, d:int;
+  x=0;
+  y=r;
+  d=3-r<<1;
+  __gfx_pixels8(xc, yc, x, y);
+  while (x<y);
+    x=x+1;
+    if (d<0);
+      d=d+x<<2+6;
+    else;
+      y=y-1;
+      d=d+(x-y)<<2+10;
+    endif;
+    __gfx_pixels8(xc, yc, x, y);
+  endwhile;
+endfunction;
+
+// MODE 4
+// with boundary checks
+function __gfx_putpixel_mode_4(x:int, y:int);
+  if ((x<0) or (x>=320) or (y<0) or (y>=256)); return; endif;
+  declare addr:word, mask:byte;
+
+//  addr=&5800+(y>>3)*320+(y and 7)+8*(x>>3);
+//  mask=%1000'0000>>(x and 7);
+
+  asm;
+    _m_ldabsx @y
+    tay
+    lda mode_4_5_pixelrow_lo,y
+    _m_stabsx @addr+0
+    lda mode_4_5_pixelrow_hi,y
+    _m_stabsx @addr+1
+  endasm;
+
+  addr=addr+(x and %11111111'11111000);
+
+  asm;
+    _m_ldabsx @x
+    and #7
+    tay
+    lda __gfx_bitmask1bpp,y
+    _m_stabsx @mask
+  endasm;
+
+  ?addr=?addr xor mask;
+endfunction;
+
+function moveto(x:int, y:int);
+  __gfx_x=x;
+  __gfx_y=y;
+endfunction;
+
+// this works but is way too slow at the moment
+function lineto(x:int, y:int);
+  declare dx:int, dy:int;
+  declare sx:int, sy:int;
+  declare e:int, e2:int;
+  dx=x-__gfx_x;
+  dy=y-__gfx_y;
+  if (dx>0); sx=1; else; sx=-1; dx=-dx; endif;
+  if (dy>0); sy=1; else; sy=-1; dy=-dy; endif;
+  if (dx>dy); e=dx>>1; else; e=(-dy)>>1; endif;
+  while ((__gfx_x!=x) or (__gfx_y!=y));
+    putpixel(__gfx_x, __gfx_y);
+    e2=e;
+    if (e2>-dx); e=e-dy; __gfx_x=__gfx_x+sx; endif;
+    if (e2<dy); e=e+dx; __gfx_y=__gfx_y+sy; endif;
+  endwhile;
+  putpixel(x, y);
+endfunction;
+
+function array16_get(a:word, i:word):word;
+  declare b:byte;
+  a=a+i<<1;
+  b=?a;
+  asm "_m_ldabsx @b";
+  asm "_m_stabsx @_result+0"; // lo
+  b=?(a+1);
+  asm "_m_ldabsx @b";
+  asm "_m_stabsx @_result+1"; // hi
+endfunction;
+
+function gcol(_m:byte, _c:byte); //&&&&fastcall! A=_m, Y=_c
+  asm;
+    pha
+    lda #18
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    pla
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    tya
+    jmp &ffee ; jmp! OSWRCH (preserves A,X,Y) rts from there
+  endasm;
+endfunction;
+
+#endif
+
+//#####################################################################
+

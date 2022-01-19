@@ -1,0 +1,64 @@
+/*
+  Sound module
+  Part of e- compiler package
+  Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+ 
+  call snd_init() before use
+*/
+
+declare snd_init();
+declare qsound(byte, byte, byte);
+
+function snd_init()
+  // nothing
+endfunction;
+
+function qsound(channel:byte, pitch:byte, duration:byte)
+  declare sound_volume:int, music_volume:int;
+  sound_volume=SOUND_VOLUME;
+  music_volume=MUSIC_VOLUME;
+  asm "{";
+  if (channel==1) // music channel
+    asm
+      ldal @music_volume
+      sta __snd_amplitude
+      ldal @music_volume+1
+      sta __snd_amplitude+1
+    endasm;
+  else // sound (2) or noise (0) channel
+    asm
+      ldal @sound_volume
+      sta __snd_amplitude
+      ldal @sound_volume+1
+      sta __snd_amplitude+1
+    endasm;
+  endif;
+  asm
+    ldal @pitch
+    sta __snd_pitch
+    bne dur
+    lda #0
+    sta __snd_amplitude
+    sta __snd_amplitude+1 ; set vol=0 when pitch was 0 (i.e. pause)
+.dur
+    ldal @duration
+    sta __snd_duration
+    ldal @channel
+    sta __snd_channel
+    txa: pha
+    ldy #hi(__snd_osword_block)
+    ldx #lo(__snd_osword_block)
+    lda #7 ; indicates OSWORD SOUND
+    jsr &fff1 ; OSWORD
+    pla: tax
+    jmp exit
+  .__snd_osword_block
+  .__snd_channel equw 0
+  .__snd_amplitude equw 0
+  .__snd_pitch equw 0
+  .__snd_duration equw 0
+  .exit
+  }
+  endasm;
+endfunction;
+

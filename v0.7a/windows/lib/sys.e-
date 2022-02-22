@@ -1,0 +1,1091 @@
+/*
+  System module
+  Part of e- compiler package
+  Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+
+  call sys_init() before use
+*/
+
+declare sys_init();
+declare wait_vsync();
+declare wait_rtc();
+declare hook_vsync(word);
+declare unhook_vsync();
+declare hook_rtc(word);
+declare unhook_rtc();
+declare wait(uint16);
+declare rnd8():byte;
+
+declare __sys_vsync_hook:word;
+declare __sys_rtc_hook:word;
+declare __sys_is_electron:int8;
+declare __sys_bbctimer:byte;
+
+declare __sys_internal();
+
+// don't call this function (won't hurt if you do)
+function __sys_internal()
+  return; // just in case
+
+#ifdef SYS_PLUS // do we need extra Sys functions?
+
+  asm
+{
+__exo__P__=*
+
+  org &ae
+
+    ; Exomizer 3.02 decruncher
+    ; https://github.com/0xC0DE6502/6502-asm-experiments/tree/master/exomizer-3.02-decruncher
+    ; Exomizer (https://bitbucket.org/magli143/exomizer/wiki/Home) is created by Magnus Lind. This version of the 6502 decruncher was created by the Bitshifters (https://github.com/bitshifters).
+    ; -------------------------------------------------------------------
+    ; zero page addresses used by exomizer 3.02 decruncher
+    ; -------------------------------------------------------------------
+    .exo_zp_start
+    .*zp_len_lo      skip 1
+    .*zp_len_hi      skip 1
+    .*zp_bits_hi     skip 1
+    .*zp_bitbuf      skip 1
+    .*zp_dest_lo     skip 1      ; dest addr lo - must come after zp_bitbuf
+    .*zp_dest_hi     skip 1      ; dest addr hi
+    .*zp_src_lo      skip 1
+    .*zp_src_hi      skip 1
+
+    .*get_crunched_byte
+    skip 1                      ; LDA abs
+    .*INPOS          skip 2      ; &FFFF
+    .*get_crunched_byte_code
+    skip 7                      ; inc INPOS: bne no_carry: inc INPOS+1: .no_carry RTS
+    .*get_crunched_byte_code_end
+
+  org __exo__P__
+}
+  endasm;
+
+#endif
+
+
+  asm
+  {
+__P__=*
+
+  org &c0
+.*_e_t0 skip 1
+.*_e_t1 skip 1
+.*_e_t2 skip 1
+.*_e_t3 skip 1
+.*_e_t4 skip 1
+.*_e_t5 skip 1
+.*_e_t6 skip 1
+.*_e_t7 skip 1
+.*_e_t8 skip 1
+.*_e_t9 skip 1
+
+.*rtc_counter skip 1
+.*vsync_counter skip 1
+.*__seed skip 1
+
+  org __P__
+
+; see: https://llx.com/Neil/a2/mult.html
+; reads 2 positive 8bit numbers directly from stack and leaves 8bit (truncated!) result in A
+;&&&&TODO: check validity of this function
+.*_e_mult8x8
+{
+  stx @0
+  tsx
+  lda &104,x ; operand 1
+  sta @1
+  lda &103,x ; operand 2
+  sta @2
+  lda #0
+  ldy #8
+.loop
+  lsr @2
+  bcc rot
+  clc
+  adc @1
+.rot
+  ror a
+  ror @3 ; lsb of result (A will be msb of result)
+  dey
+  bne loop
+  lda @3 ; return lsb, discard msb (previously in A)
+  ldx @0
+  rts
+}
+
+; see: https://llx.com/Neil/a2/mult.html
+; reads 2 positive 16bit numbers directly from stack and leaves 16bit (truncated!) result in YA
+;&&&&TODO: check validity of this function
+.*_e_mult16x16
+{
+  stx @0
+  tsx
+  lda &106,x ; msb of operand 1
+  sta @2
+  lda &105,x ; lsb of operand 1
+  sta @1
+  lda &104,x ; msb of operand 2
+  sta @4
+  lda &103,x ; lsb of operand 2
+  sta @3
+.*_e_cont_mult16x16
+  lda #0
+  sta @7
+  ldy #16
+.loop
+  lsr @4
+  ror @3
+  bcc rot
+  pha
+  clc
+  lda @7
+  adc @1
+  sta @7
+  pla
+  adc @2
+.rot
+  ror a
+  ror @7
+  ror @6
+  ror @5
+  dey
+  bne loop
+  ldy @6 ; return lsw in YA, discard msw
+  lda @5
+  ldx @0
+  rts
+}
+
+; Y==0 --> msb of operand 1 = 0
+; Y==1 --> msb of operand 1 is sign extension of lsb
+;&&&&TODO: check validity of this function
+.*_e_mult8x16
+{
+  stx @0
+  tsx
+  lda &105,x ; operand 1 (8bit)
+  cpy #0
+  beq store
+  ; do sign extend
+  dey ; Y=0
+  cmp #&80
+  bcc store
+  dey ; Y=&ff
+.store
+  sty @2 ; virtual msb of operand 1
+  sta @1 ; lsb of operand 1
+  lda &104,x ; msb of operand 2
+  sta @4
+  lda &103,x ; lsb of operand 2
+  sta @3
+  jmp _e_cont_mult16x16
+}
+
+; Y==0 --> msb of operand 2 = 0
+; Y==1 --> msb of operand 2 is sign extension of lsb
+;&&&&TODO: check validity of this function
+.*_e_mult16x8
+{
+  stx @0
+  tsx
+  lda &103,x ; operand 2 (8bit)
+  cpy #0
+  beq store
+  ; do sign extend
+  dey ; Y=0
+  cmp #&80
+  bcc store
+  dey ; Y=&ff
+.store
+  sty @4 ; virtual msb of operand 2
+  sta @3 ; lsb of operand 2
+  lda &105,x ; msb of operand 1
+  sta @2
+  lda &104,x ; lsb of operand 1
+  sta @1
+  jmp _e_cont_mult16x16
+}
+
+; A = signed 8bit number
+.*_e_print_int8
+{
+  tay ; test 8bit number
+  sta @2 ; remember (sign of) original number
+  bpl is_pos
+  ; make negative number positive
+  eor #&ff
+  clc
+  adc #1
+.is_pos
+  sta @0 ; remember number (made positive)  
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @1 ; collecting decimal digit
+  ldy #8 ; loop counter (8 bits)
+.loop
+  asl @0
+  rol @1
+  lda @1
+  sec: sbc #10
+  bcc less10
+  sta @1
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @1
+  ora #'0'
+  pha
+  lda @0
+  bne div10
+
+  lda @2 ; was neg?
+  bpl is_pos2
+  lda #'-'
+  jsr &ffee ; OSWRCH
+.is_pos2
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+; A = unsigned 8bit number
+.*_e_print_uint8
+{
+  sta @0 ; remember number
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @1 ; collecting decimal digit
+  ldy #8 ; loop counter (8 bits)
+.loop
+  asl @0
+  rol @1
+  lda @1
+  sec: sbc #10
+  bcc less10
+  sta @1
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @1
+  ora #'0'
+  pha
+  lda @0
+  bne div10
+
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+; AY = signed 16bit number
+.*_e_print_int16
+{
+  cmp #&80
+  sta @3 ; remember (sign of) original number (msb)
+  bcc is_pos
+  ; make negative number positive
+  ; C=1
+  tya
+  eor #&ff
+  adc #0 ; add 1 (because C=1)
+  tay
+  lda @3
+  eor #&ff
+  adc #0
+.is_pos
+  sty @0 ; remember number (made positive), lsb
+  sta @1 ; msb
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @2 ; collecting decimal digit
+  ldy #16 ; loop counter (16 bits)
+.loop
+  asl @0
+  rol @1
+  rol @2
+  lda @2
+  sec: sbc #10
+  bcc less10
+  sta @2
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @2
+  ora #'0'
+  pha
+  lda @0
+  ora @1
+  bne div10
+
+  lda @3 ; was neg?
+  bpl is_pos2
+  lda #'-'
+  jsr &ffee ; OSWRCH
+.is_pos2
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+; AY = unsigned 16bit number
+.*_e_print_uint16
+{
+  sty @0 ; lsb
+  sta @1 ; msb
+  lda #0
+  pha ; marks end of string on stack
+.div10
+  lda #0
+  sta @2 ; collecting decimal digit
+  ldy #16 ; loop counter (16 bits)
+.loop
+  asl @0
+  rol @1
+  rol @2
+  lda @2
+  sec: sbc #10
+  bcc less10
+  sta @2
+  inc @0
+.less10
+  dey
+  bne loop
+  lda @2
+  ora #'0'
+  pha
+  lda @0
+  ora @1
+  bne div10
+
+  pla
+.print
+  jsr &ffee ; OSWRCH
+  pla
+  bne print
+
+  rts
+}
+
+  }
+  endasm;
+endfunction;
+
+// in 1/50ths of a second (rounded up to next vsync, unless cs==0)
+function wait(_cs:uint16) //&&&&fastcall! YA=_cs
+  declare cs:uint16;
+  asm
+    stal @cs
+    tya
+    stal @cs+1
+  endasm;
+
+  if (cs)
+    wait_vsync();
+    while (cs)
+      wait_vsync();
+      cs=cs-1;
+    endwhile;
+  endif;
+endfunction;
+
+function hook_vsync(_f:word) //&&&&fastcall! YA=_f
+  asm
+  {
+    php
+    sei
+    sta @0
+    lda @__sys_vsync_hook
+    ora @__sys_vsync_hook+1
+    bne exit ; another hook already active!
+    lda @0
+    sta @__sys_vsync_hook
+    sty @__sys_vsync_hook+1
+  .exit
+    plp
+  }
+  endasm;
+endfunction;
+
+function unhook_vsync()
+  asm
+    php
+    sei
+    lda #0
+    sta @__sys_vsync_hook
+    sta @__sys_vsync_hook+1
+    plp
+  endasm;
+endfunction;
+
+function hook_rtc(_f:word) //&&&&fastcall! YA=_f
+  asm
+  {
+    php
+    sei
+    sta @0
+    lda @__sys_rtc_hook
+    ora @__sys_rtc_hook+1
+    bne exit ; another hook already active!
+    lda @0
+    sta @__sys_rtc_hook
+    sty @__sys_rtc_hook+1
+  .exit
+    plp
+  }
+  endasm;
+endfunction;
+
+function unhook_rtc()
+  asm
+    php
+    sei
+    lda #0
+    sta @__sys_rtc_hook
+    sta @__sys_rtc_hook+1
+    plp
+  endasm;
+endfunction;
+
+function rnd8():byte;
+  asm
+  {
+    lda __seed
+    asl a
+    bcc no_eor
+    eor #&cf
+  .no_eor
+    sta __seed
+    stal @_result
+  }
+  endasm;
+endfunction;
+
+//&&&& there should also be a sys_exit() to unhook IRQ1V/etc
+function sys_init()
+  unhook_vsync();
+  unhook_rtc();
+  asm
+  {
+  php
+  lda &fc
+  sta __seed
+  bne cont
+  inc __seed ; must never init to 0
+.cont  
+  sei
+  lda &204
+  sta sm_org_irq1v+1
+  lda &205
+  sta sm_org_irq1v+2
+  lda #0
+  ldx #1
+  stx @__sys_is_electron ; assume Acorn Electron
+  jsr &fff4 ; OSBYTE 0 determines host machine: X==0 ==> Electron, X<>0 ==> BBC or something else (assume BBC or similar)
+  txa
+  beq elk ; no need to change flag (default = 1 = Electron), continue
+  dec @__sys_is_electron ; set to 0, because this is NOT an Electron, assume BBC
+  ; beeb
+  ; user timer 1
+  sei
+  lda #&ff
+  sta &fe64
+  sta &fe65
+  lda #0
+  sta &fe6b ; TIMER 1 in one shot mode
+  sta @__sys_bbctimer
+  lda #%11000000 ; we only want to service these interrupts: TIMER1 (bit6)
+  sta &fe6e ; IER User VIA
+  lda #lo(beeb_irq_handler)  
+  sta &204
+  lda #hi(beeb_irq_handler)
+  sta &205
+  plp
+  rts
+
+.elk
+  sei
+  lda #%00001111 ; RTC, VSYNC
+  sta &fe00 ; IER
+  lda #lo(elk_irq_handler)  
+  sta &204
+  lda #hi(elk_irq_handler)
+  sta &205
+  plp
+  rts
+
+.elk_irq_handler 
+  lda &fe00
+  and #4
+  beq check_rtc
+
+  inc vsync_counter
+
+  jmp check_vsync_hook
+
+.check_rtc
+  lda &fe00
+  and #8
+  beq exit_int
+
+  inc rtc_counter
+
+  jmp check_rtc_hook
+
+.exit_int
+.sm_org_irq1v
+  jmp &ffff ; SELFMOD  
+
+.beeb_irq_handler
+  lda &fe4d ; get IFR of System VIA
+  and #2 ; check bit1 (vsync interrupt CA1)
+  beq check_timer1
+
+  ; vsync  
+  ; set TIMER1 (one shot) to fire at approx 100th scanline
+  lda #lo(128*64)
+  sta &fe64
+  lda #hi(128*64)
+  sta &fe65
+
+  ; set timer type
+  lsr @__sys_bbctimer ;=0
+
+  beq exit_int ; jump always
+
+.check_timer1
+  lda &fe6d ; get IFR of User VIA
+  and #&40 ; check bit6 (TIMER1)
+  beq exit_int
+
+  lda #&40
+  sta &fe6d ; clear int
+
+  lda @__sys_bbctimer ; check timer type
+  bne beeb_vsync
+
+  ; 'rtc' ~100th scanline
+  inc rtc_counter
+
+  ; set TIMER1 (one shot) to fire after approx 156 scanlines
+  lda #lo(156*64)
+  sta &fe64
+  lda #hi(156*64)
+  sta &fe65
+
+  ; set timer type
+  sec
+  rol @__sys_bbctimer ;=1
+
+  jmp check_rtc_hook
+
+.beeb_vsync
+  ; 'vsync' ~256th scanline
+  inc vsync_counter
+  
+  ; fall through to check_vsync_hook!
+
+.check_vsync_hook
+  lda @__sys_vsync_hook+1
+  ora @__sys_vsync_hook
+  bne vsync_hook_defined
+  jmp exit_int ; hook not defined
+.vsync_hook_defined  
+  lda @__sys_vsync_hook
+  sta sm_hook+1
+  lda @__sys_vsync_hook+1
+  sta sm_hook+2
+
+  jmp exec_hook
+
+.check_rtc_hook
+  lda @__sys_rtc_hook+1
+  ora @__sys_rtc_hook
+  bne rtc_hook_defined
+  jmp exit_int ; hook not defined
+.rtc_hook_defined
+  lda @__sys_rtc_hook
+  sta sm_hook+1
+  lda @__sys_rtc_hook+1
+  sta sm_hook+2
+
+.exec_hook
+  txa: pha: tya: pha
+  lda @0: pha
+  lda @1: pha
+  lda @2: pha
+  lda @3: pha
+  lda @4: pha
+  lda @5: pha
+  lda @6: pha
+  lda @7: pha
+  lda @8: pha
+  lda @9: pha
+.sm_hook
+  jsr &ffff ; SELFMOD
+  pla: sta @9
+  pla: sta @8
+  pla: sta @7
+  pla: sta @6
+  pla: sta @5
+  pla: sta @4
+  pla: sta @3
+  pla: sta @2
+  pla: sta @1
+  pla: sta @0
+  pla: tay: pla: tax
+
+  jmp exit_int
+
+  }
+  endasm;
+endfunction;
+
+function wait_vsync()
+  asm
+  {
+  lda vsync_counter
+.wait
+  cmp vsync_counter  
+  beq wait
+  }
+  endasm;
+endfunction;
+
+function wait_rtc()
+  asm
+  {
+  lda rtc_counter
+.wait
+  cmp rtc_counter  
+  beq wait
+  }
+  endasm;
+endfunction;
+
+
+
+
+
+//#####################################################################
+
+#ifdef SYS_PLUS // do we need extra Sys functions?
+
+declare sys(word);
+declare dexo(word, byte);
+
+// pass CR-string to CLI for execution
+function sys(_s:word) //&&&&fastcall! YA=_s
+  asm
+    stx @0
+    tax
+    jsr &fff7 ; OSCLI
+    ldx @0
+  endasm;
+endfunction;
+
+// Exomizer 3.02 decruncher
+// https://github.com/0xC0DE6502/6502-asm-experiments/tree/master/exomizer-3.02-decruncher
+// Exomizer (https://bitbucket.org/magli143/exomizer/wiki/Home) is created by Magnus Lind. This version of the 6502 decruncher was created by the Bitshifters (https://github.com/bitshifters).
+// de-exomize src (16bit address) to dst (8bit address, hi byte only, so page aligned)
+// exomizer 3.02 decruncher
+//&&&& decruncher uses bottom of stack (156 bytes) as temporary workspace while decrunching
+function dexo(src:word, dst:byte)
+  asm
+  {
+    txa: pha
+    ldal @src
+    sta @0
+    ldal @src+1
+    tay
+    ldal @dst
+    ldx @0
+    jsr decrunch_to_page_A ; exomizer uses bottom of stack as workspace!!
+    pla: tax
+  }
+  endasm;
+
+  return;
+
+  asm
+  {
+
+; -------------------------------------------------------------------
+; Controls if the shared get_bits routines should be inlined or not.
+INLINE_GET_BITS=1
+; -------------------------------------------------------------------
+; if literal sequences is not used (the data was crunched with the -c
+; flag) then the following line can be uncommented for shorter and.
+; slightly faster code.
+LITERAL_SEQUENCES_NOT_USED = 1
+; -------------------------------------------------------------------
+; if the sequence length is limited to 256 (the data was crunched with
+; the -M256 flag) then the following line can be uncommented for
+; shorter and slightly faster code.
+MAX_SEQUENCE_LENGTH_256 = 1
+
+decrunch_table = $101 ; yes! we have enough stack space to use page 1 here
+;.decrunch_table SKIP 156
+	
+tabl_bi = decrunch_table
+tabl_lo = decrunch_table + 52
+tabl_hi = decrunch_table + 104
+
+.get_crunched_byte_copy
+{
+        inc INPOS
+        bne s0a
+        inc INPOS+1
+
+.s0a    rts
+}
+.get_crunched_byte_copy_end
+
+IF (get_crunched_byte_copy_end-get_crunched_byte_copy) <> (get_crunched_byte_code_end-get_crunched_byte_code)
+        ERROR "get_crunched_byte function size mismatch."
+ENDIF
+
+;; refill bits is always inlined
+MACRO mac_refill_bits
+        pha
+        jsr get_crunched_byte
+        rol a
+        sta zp_bitbuf
+        pla
+ENDMACRO
+
+IF INLINE_GET_BITS
+MACRO mac_get_bits
+{
+        adc #$80                ; needs c=0, affects v
+        asl a
+        bpl gb_skip
+.gb_next
+        asl zp_bitbuf
+        bne gb_ok
+        mac_refill_bits
+.gb_ok
+        rol a
+        bmi gb_next
+.gb_skip
+        bvc skip
+.gb_get_hi
+        sec
+        sta zp_bits_hi
+        jsr get_crunched_byte
+.skip
+}
+ENDMACRO
+ELSE
+MACRO mac_get_bits
+        jsr get_bits
+ENDMACRO
+.get_bits
+        adc #$80                ; needs c=0, affects v
+        asl a
+        bpl gb_skip
+.gb_next
+        asl zp_bitbuf
+        bne gb_ok
+        mac_refill_bits
+.gb_ok
+        rol a
+        bmi gb_next
+.gb_skip
+        bvs gb_get_hi
+        rts
+.gb_get_hi
+        sec
+        sta zp_bits_hi
+        jmp get_crunched_byte
+ENDIF
+; -------------------------------------------------------------------
+; no code below this comment has to be modified in order to generate
+; a working decruncher of this source file.
+; However, you may want to relocate the tables last in the file to a
+; more suitable address.
+; -------------------------------------------------------------------
+
+; -------------------------------------------------------------------
+; jsr this label to decrunch, it will in turn init the tables and
+; call the decruncher
+; no constraints on register content, however the
+; decimal flag has to be #0 (it almost always is, otherwise do a cld)
+.*decrunch_to_page_A
+; -------------------------------------------------------------------
+; init zeropage, x and y regs. (12 bytes)
+{
+        pha
+	stx INPOS
+        sty INPOS+1
+
+	lda #$AD ; LDA abs
+	sta get_crunched_byte
+	ldx #get_crunched_byte_copy_end-get_crunched_byte_copy-1 ; 210227 0xC0DE: -1!!
+.copyloop
+	lda get_crunched_byte_copy,X
+	sta get_crunched_byte_code,X
+	dex
+	bpl copyloop
+        ldy #0
+        ldx #3
+.init_zp
+        jsr get_crunched_byte
+        sta zp_bitbuf - 1,x
+        dex
+        bne init_zp
+
+; allow relocation of destination
+        clc
+        pla
+        adc zp_dest_hi
+        sta zp_dest_hi
+
+; -------------------------------------------------------------------
+; calculate tables (62 bytes) + get_bits macro
+; x and y must be #0 when entering
+;
+        clc
+.table_gen
+        tax
+        tya
+        and #$0f
+        sta tabl_lo,y
+        beq shortcut            ; start a new sequence
+; -------------------------------------------------------------------
+        txa
+        adc tabl_lo - 1,y
+        sta tabl_lo,y
+        lda zp_len_hi
+        adc tabl_hi - 1,y
+.shortcut
+        sta tabl_hi,y
+; -------------------------------------------------------------------
+        lda #$01
+        sta <zp_len_hi
+        lda #$78                ; %01111000
+        mac_get_bits
+; -------------------------------------------------------------------
+        lsr a
+        tax
+        beq rolled
+        php
+.rolle
+        asl zp_len_hi
+        sec
+        ror a
+        dex
+        bne rolle
+        plp
+.rolled
+        ror a
+        sta tabl_bi,y
+        bmi no_fixup_lohi
+        lda zp_len_hi
+        stx zp_len_hi
+        equb $24
+.no_fixup_lohi
+        txa
+; -------------------------------------------------------------------
+        iny
+        cpy #52
+        bne table_gen
+; -------------------------------------------------------------------
+; prepare for main decruncher
+        ldy zp_dest_lo
+        stx zp_dest_lo
+        stx zp_bits_hi
+; -------------------------------------------------------------------
+; copy one literal byte to destination (11 bytes)
+;
+.literal_start1
+        tya
+        bne no_hi_decr
+        dec zp_dest_hi
+.no_hi_decr
+        dey
+        jsr get_crunched_byte
+        sta (zp_dest_lo),y
+; -------------------------------------------------------------------
+; fetch sequence length index (15 bytes)
+; x must be #0 when entering and contains the length index + 1
+; when exiting or 0 for literal byte
+.next_round
+        dex
+        lda zp_bitbuf
+.no_literal1
+        asl a
+        bne nofetch8
+        jsr get_crunched_byte
+        rol a
+.nofetch8
+        inx
+        bcc no_literal1
+        sta zp_bitbuf
+; -------------------------------------------------------------------
+; check for literal byte (2 bytes)
+;
+        beq literal_start1
+; -------------------------------------------------------------------
+; check for decrunch done and literal sequences (4 bytes)
+;
+        cpx #$11
+IF INLINE_GET_BITS
+        bcc skip_jmp
+        jmp exit_or_lit_seq
+.skip_jmp
+ELSE
+        bcs exit_or_lit_seq
+ENDIF
+; -------------------------------------------------------------------
+; calulate length of sequence (zp_len) (18(11) bytes) + get_bits macro
+;
+        lda tabl_bi - 1,x
+        mac_get_bits
+        adc tabl_lo - 1,x       ; we have now calculated zp_len_lo
+        sta zp_len_lo
+IF MAX_SEQUENCE_LENGTH_256
+        tax
+ELSE
+        lda zp_bits_hi
+        adc tabl_hi - 1,x       ; c = 0 after this.
+        sta zp_len_hi
+; -------------------------------------------------------------------
+; here we decide what offset table to use (27(26) bytes) + get_bits_nc macro
+; z-flag reflects zp_len_hi here
+;
+        ldx zp_len_lo
+ENDIF
+        lda #$e1
+        cpx #$03
+        bcs gbnc2_next
+        lda tabl_bit,x
+.gbnc2_next
+        asl zp_bitbuf
+        bne gbnc2_ok
+        tax
+        jsr get_crunched_byte
+        rol a
+        sta zp_bitbuf
+        txa
+.gbnc2_ok
+        rol a
+        bcs gbnc2_next
+        tax
+; -------------------------------------------------------------------
+; calulate absolute offset (zp_src) (21 bytes) + get_bits macro
+;
+IF MAX_SEQUENCE_LENGTH_256=0
+        lda #0
+        sta zp_bits_hi
+ENDIF
+        lda tabl_bi,x
+        mac_get_bits
+        adc tabl_lo,x
+        sta zp_src_lo
+        lda zp_bits_hi
+        adc tabl_hi,x
+        adc zp_dest_hi
+        sta zp_src_hi
+; -------------------------------------------------------------------
+; prepare for copy loop (2 bytes)
+;
+.pre_copy
+        ldx zp_len_lo
+; -------------------------------------------------------------------
+; main copy loop (30 bytes)
+;
+.copy_next
+        tya
+        bne copy_skip_hi
+        dec zp_dest_hi
+        dec zp_src_hi
+.copy_skip_hi
+        dey
+IF LITERAL_SEQUENCES_NOT_USED=0
+        bcs get_literal_byte
+ENDIF
+        lda (zp_src_lo),y
+.literal_byte_gotten
+        sta (zp_dest_lo),y
+        dex
+        bne copy_next
+IF MAX_SEQUENCE_LENGTH_256=0
+        lda zp_len_hi
+IF INLINE_GET_BITS
+        bne copy_next_hi
+ENDIF
+ENDIF
+.begin_stx
+        stx zp_bits_hi
+IF INLINE_GET_BITS=0
+        beq next_round
+ELSE
+        jmp next_round
+ENDIF
+IF MAX_SEQUENCE_LENGTH_256=0
+.copy_next_hi
+        dec zp_len_hi
+        jmp copy_next
+ENDIF
+IF LITERAL_SEQUENCES_NOT_USED=0
+.get_literal_byte
+        jsr get_crunched_byte
+        bcs literal_byte_gotten
+ENDIF
+; -------------------------------------------------------------------
+; exit or literal sequence handling (16(12) bytes)
+;
+.exit_or_lit_seq
+IF LITERAL_SEQUENCES_NOT_USED=0
+        beq decr_exit
+        jsr get_crunched_byte
+IF MAX_SEQUENCE_LENGTH_256=0
+        sta zp_len_hi
+ENDIF
+        jsr get_crunched_byte
+        tax
+        bcs copy_next
+.decr_exit
+ENDIF
+        rts
+; -------------------------------------------------------------------
+; the static stable used for bits+offset for lengths 3, 1 and 2 (3 bytes)
+; bits 4, 2, 4 and offsets 16, 48, 32
+; -------------------------------------------------------------------
+; end of decruncher
+; -------------------------------------------------------------------
+.tabl_bit
+ equb %11100001, %10001100, %11100010
+}
+
+  }
+  endasm;
+endfunction;
+
+#endif
+
+//#####################################################################
+

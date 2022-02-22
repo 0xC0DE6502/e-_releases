@@ -1,0 +1,10 @@
+*BASIC
+*FX200,3
+*KEY0*TAPE|MFORK%=0TO&5000STEP4:K%!&E00=K%!&2000:NEXTK%:CALL&E00|M
+MODE6
+HIMEM=&8000
+VDU28,0,24,39,14
+REM Loading game, please wait...
+*LOAD 0xC0DE 2000
+REM Relocating game, hang on...
+*FX138,0,128

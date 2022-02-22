@@ -1,0 +1,468 @@
+/*
+  Python
+  Game for Acorn Electron and BBC Micro
+  Written in e-, compiled to 6502 asm, assembled with BeebAsm
+  Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+
+  Most game data (like tiles, sprites and levels) lives here
+*/
+
+declare data();
+
+// no need to call this function
+function data()
+  return; // just in case
+
+  asm "equs \" Python \""; //&&&&version (not shown but embedded within the final binary)
+  VERSION_NOTSHOWN;
+  asm "equs \" - Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502) \"";
+
+  asm ".*str_copyright"; //&&&&version (shown), somewhat cryptic because of special symbols
+  VERSION_SHOWN;
+//&&&& doesn't seem to handle correctly in all versions of the e- compiler Win/Mac/Linux(?)  asm "equs \" BY \\XC\\DE\", 0"; // \=0
+//so use the alternative asm block:
+  asm
+    equs " BY \XC\DE", 0
+  endasm;
+
+  asm
+
+  .*digits_sprites
+    incbin "gfx/digits_8x8x10.bin"
+
+  .*str_score
+    equs "SCORE", 0
+
+  .*str_00000
+    equs "\\\\\", 0 ; \=0
+
+  .*str_time
+    equs "TIME", 0
+
+  .*str_level
+    equs "LVL", 0
+
+  .*str_lives
+    equs "LIVES", 0
+
+  .*str_nameofgame 
+    equs "PYTHON", 0
+
+  endasm;
+
+#ifndef ALTERNATE_KEYS
+  asm
+
+  .*str_left
+    equs "Z _ LEFT", 0 ; _=-
+
+  .*str_right
+    equs "X _ RIGHT", 0 ; _=-
+
+  .*str_up
+    equs "[ _ UP", 0 ; [=:, _=-
+
+  .*str_down
+    equs "] _ DOWN", 0 ; ]=/, _=-
+
+  endasm;
+#endif
+
+#ifdef ALTERNATE_KEYS
+  asm
+
+  .*str_left
+    equs "^ _ LEFT", 0 ; ^=., _=-
+
+  .*str_right
+    equs "] _ RIGHT", 0 ; ]=/, _=-
+
+  .*str_up
+    equs "A _ UP", 0 ; _=-
+
+  .*str_down
+    equs "Z _ DOWN", 0 ; _=-
+
+  endasm;
+#endif
+
+  asm
+
+  .*str_musiconoff
+    equs "M _ MUSIC", 0 ; _=-
+
+  .*str_spacetoplay
+    equs "SPACE TO PLAY", 0
+
+  .*str_hiscore
+    equs "HI[", 0 ; [=:
+
+  .*tiles
+    equb '/', '=', '\', '|', 'J', 'L', 'T', ']', 'U', '[', '.', '{', ''', '}', '+', 'O'
+
+  .*levels
+    equw intro_screen
+    equw level1
+    equw level2
+    equw level3
+    equw level4
+    equw level5
+    equw level6
+    equw level7
+    equw level8
+
+    ; &&&& Notes on level design:
+    ; Levels must have at least 1 diamond
+    ; Levels must not have too many diamonds or the python tail will misbehave (trail stores up to 256 movements)
+    ; Levels must not open spaces or sharp turns because the python tail will misbehave when turning a corner
+    ; Check the example levels for inspiration
+
+  .*intro_screen ; 15 lines of 20 chars
+    equs "/==================\"
+    equs "| ***          *** |"
+    equs "|                  |"
+    equs "L==.============.==J"
+    equs "   |            |   "
+    equs "/=='============'==\"
+    equs "|                  |"
+    equs "|                  |"
+    equs "|                  |"
+    equs "|                  |"
+    equs "|                  |"
+    equs "|                  |"
+    equs "|                  |"
+    equs "L==================J"
+    equs "                    "
+  
+  .*level1 ; 15 lines of 20 chars
+    equs "/==================\"
+    equs "|*    *     *     *|"
+    equs "| /======\ /=====\ |"
+    equs "| |      | |     | |"
+    equs "| |      |*|     | |"
+    equs "|*|      | |     |*|"
+    equs "| L======J L=====J |"
+    equs "|   *     *     *  |"
+    equs "| /=.=.==\ /=====\ |"
+    equs "|*| |*|  | |     | |"
+    equs "| | |*|  |*|     | |"
+    equs "| | |*|  | |     |*|"
+    equs "| L=J*L==J L=====J |"
+    equs "|*     *           |"
+    equs "L==================J"
+
+  .*level2 ; 15 lines of 20 chars
+    equs "/==================\"
+    equs "|  *          *    |"
+    equs "| [==]*O*[=======] |"
+    equs "|   *     *      * |"
+    equs "|*[========]*[===\ |"
+    equs "|     *   *     *| |"
+    equs "| O /==========\ |*|"
+    equs "| * |          | U |"
+    equs "| T |          | * |"
+    equs "|*| L==========J T |"
+    equs "| |*   *     *   | |"
+    equs "|*}======\ /====={*|"
+    equs "| L======J*L=====J |"
+    equs "| *    *           |"
+    equs "L==================J"
+
+  .*level3 ; 15 lines of 20 chars
+    equs "/================.=\"
+    equs "|  *    *     *  | |"
+    equs "| [============] | |"
+    equs "|  *         *   | |"
+    equs "| [==]*[]*[======J |"
+    equs "|  *              *|"
+    equs "| [=.=======]*[==] |"
+    equs "| * |   *         *|"
+    equs "| O | [=====]*[===={"
+    equs "| * |*   *      *  |"
+    equs "| T L====] [=====] |"
+    equs "| |       *        |"
+    equs "| | O*O [===] O*[] |"
+    equs "| |*               |"
+    equs "L='================J"
+
+  .*level4 ; 15 lines of 20 chars
+    equs "/==================\"
+    equs "|  *   *       *   |"
+    equs "| /=====]*[======\ |"
+    equs "|*|*         *   |*|"
+    equs "| | T*[========\ | |"
+    equs "| | |    *     |*|*|"
+    equs "| U }========]*| U |"
+    equs "| * |    *     | * |"
+    equs "| T | [========J T |"
+    equs "| | |  *    *    | |"
+    equs "|*| L==========] |*|"
+    equs "| |*   *    *   *| |"
+    equs "| L=====]*[======J |"
+    equs "|*   *            *|"
+    equs "L==================J"
+
+  .*level5 ; 15 lines of 20 chars
+    equs "/=========.========\"
+    equs "|*   *   *|*   *   |"
+    equs "|*T /===] | [====\*|"
+    equs "}=J | *   | *    | |"
+    equs "| * | [===+====]*| |"
+    equs "| T |*    |  *   |*|"
+    equs "| | L===]*U [==] U |"
+    equs "|*|  *        *    |"
+    equs "| L==============]*|"
+    equs "|  *           *   |"
+    equs "}=====]*/==]*[====={"
+    equs "|   *   |          |"
+    equs "| [===] }========] |"
+    equs "|  *    |          |"
+    equs "L======='==========J"
+
+  .*level6 ; 15 lines of 20 chars
+    equs "/==========.===.===\"
+    equs "|     *    | * | * |"
+    equs "|*O*[==\ T*U T U T |"
+    equs "|    * |*|  *|*  |*|"
+    equs "| /==\ | U [='=] U |"
+    equs "|*|  |*|  *    *   |"
+    equs "| |  | U [==\*[===={"
+    equs "|*|  |   *  |    * |"
+    equs "| L=='.===] L==] T |"
+    equs "|*    | *    *   | |"
+    equs "}===] | [======] |*|"
+    equs "|  *  |  *      *| |"
+    equs "|*[===J [===]*[==J |"
+    equs "|  *              *|"
+    equs "L==================J"
+
+  .*level7 ; 15 lines of 20 chars
+    equs "/====.=============\"
+    equs "| *  |  *     *   *|"
+    equs "| /\*| /===\*[===] |"
+    equs "|*|| U | * |   *   |"
+    equs "| || * | T |*/===] |"
+    equs "| LJ T U | U |*    |"
+    equs "| *  |*  | * | /=.={"
+    equs "}==] L===+===J | |*|"
+    equs "|     *  |  *  | |*|"
+    equs "|*[====] | [=] L=J |"
+    equs "| *     *| *       |"
+    equs "| T /===='=====\*T |"
+    equs "| U*L==========J U |"
+    equs "|*    *           *|"
+    equs "L==================J"
+
+  .*level8 ; 15 lines of 20 chars
+    equs "/==================\"
+    equs "|  *   *      *   *|"
+    equs "| [=] O O*O T O [] |"
+    equs "|*   *      |    * |"
+    equs "}===] O O O*U O [=={"
+    equs "|  *    *         *|"
+    equs "| O T O O O*O O [] |"
+    equs "|   |  *         * |"
+    equs "}=] U O O*O*O O [] |"
+    equs "|*    *       *   *|"
+    equs "| O O O O*[=\*O [] |"
+    equs "|   *       |   *  |"
+    equs "|*[=] O*O O*U O []*|"
+    equs "|    *             |"
+    equs "L==================J"
+
+
+  .*tiles_8x16x16_sprites
+    for n,0,16-1
+      equw (&400+n*((8*16)/4)) ; &&&& 512 bytes moved down to &400!!
+    next ;n
+
+  .*corner_up_left_8x16x8_sprites
+    for n,0,8-1
+      equw (&600+n*((8*16)/4)) ; &&&& 256 bytes moved down to &600!!
+    next ;n
+
+  .*corner_up_right_8x16x8_sprites
+    for n,0,8-1
+      equw (&700+n*((8*16)/4)) ; &&&& 256 bytes moved down to &700!!
+    next ;n
+
+  .*corner_down_left_8x16x8_sprites
+    for n,0,8-1
+      equw (&a00+n*((8*16)/4)) ; &&&& 256 bytes moved down to &A00!!
+    next ;n
+
+  .*corner_down_right_8x16x8_sprites
+    for n,0,8-1
+      equw (&b00+n*((8*16)/4)) ; &&&& 256 bytes moved down to &B00!!
+    next ;n
+
+  .*tune_data
+    ;    B3 A3 B3 F3# D3 F3# B2
+    equb 97,89,97,77, 61,77, 49,0
+    ;    B3 A3 B3 F3# D3 F3# B2
+    equb 97,89,97,77, 61,77, 49,0
+    ;    B3 C4#  D4 C4#  D4 B3 C4# B3 C4# A3 B3 A3 B3 G3 B3
+    equb 97,105,109,105,109,97,105,97,105,89,97,89,97,81,97,0
+    ;    B3 A3 B3 F3# D3 F3# B2
+    equb 97,89,97,77, 61,77, 49,0
+    ;    B3 A3 B3 F3# D3 F3# B2
+    equb 97,89,97,77, 61,77, 49,0
+    ;    B3 C4#  D4 C4#  D4 B3 C4# B3 C4# A3 B3 A3 B3 C4#  D4
+    equb 97,105,109,105,109,97,105,97,105,89,97,89,97,105,109,0
+    ;    F4#  E4 F4#  D4 A3  D4 F3#
+    equb 125,117,125,109,89,109,77, 0
+    ;    F4#  E4 F4#  D4 A3  D4 F3#
+    equb 125,117,125,109,89,109,77, 0
+    ;    F4# G4#  A4 G4#  A4 F4# G4# F4# G4#  E4 F4#  E4 F4#  D4 F4#
+    equb 125,133,137,133,137,125,133,125,133,117,125,117,125,109,125,0
+    ;    F4#  E4 F4#  D4 A3  D4 F3#
+    equb 125,117,125,109,89,109,77, 0
+    ;    F4#  E4 F4#  D4 A3  D4 F3#
+    equb 125,117,125,109,89,109,77, 0
+    ;    F4# G4#  A4 G4#  A4 F4# G4# F4# G4#  E4 F4#  E4  D4  E4 F4#
+    equb 125,133,137,133,137,125,133,125,133,117,125,117,109,117,125,0
+    equb -1 ; end of tune (repeat)
+
+  .letters_symbols_8x8x32
+    incbin "gfx/letters_symbols_8x8x32.bin"
+  .*letters_symbols_8x8x32_sprites
+    for n,0,32-1
+      equw (letters_symbols_8x8x32+n*((8*8)/4))
+    next ;n
+
+  .diamond_8x16x1
+    incbin "gfx/diamond_8x16x1.bin"
+  .*diamond_8x16x1_sprites
+    for n,0,1-1
+      equw (diamond_8x16x1+n*((8*16)/4))
+    next ;n
+
+  .head_up_8x16x1
+    incbin "gfx/head_up_8x16x1.bin"
+  .*head_up_8x16x1_sprites
+    for n,0,1-1
+      equw (head_up_8x16x1+n*((8*16)/4))
+    next ;n
+
+  .head_down_8x16x1
+    incbin "gfx/head_down_8x16x1.bin"
+  .*head_down_8x16x1_sprites
+    for n,0,1-1
+      equw (head_down_8x16x1+n*((8*16)/4))
+    next ;n
+
+  .head_left_12x16x2
+    incbin "gfx/head_left_12x16x2.bin"
+  .*head_left_12x16x2_sprites
+    for n,0,2-1
+      equw (head_left_12x16x2+n*((12*16)/4))
+    next ;n
+
+  .head_right_12x16x2
+    incbin "gfx/head_right_12x16x2.bin"
+  .*head_right_12x16x2_sprites
+    for n,0,2-1
+      equw (head_right_12x16x2+n*((12*16)/4))
+    next ;n
+
+
+
+
+  .body_up_8x8x3
+    incbin "gfx/body_up_8x8x3.bin"
+  .*body_up_8x8x3_sprites
+    for n,0,3-1
+      equw (body_up_8x8x3+n*((8*8)/4))
+    next ;n
+
+  .body_down_8x8x3
+    incbin "gfx/body_down_8x8x3.bin"
+  .*body_down_8x8x3_sprites
+    for n,0,3-1
+      equw (body_down_8x8x3+n*((8*8)/4))
+    next ;n
+
+  .body_left_4x16x3
+    incbin "gfx/body_left_4x16x3.bin"
+  .*body_left_4x16x3_sprites
+    for n,0,3-1
+      equw (body_left_4x16x3+n*((4*16)/4))
+    next ;n
+
+  .body_right_4x16x3
+    incbin "gfx/body_right_4x16x3.bin"
+  .*body_right_4x16x3_sprites
+    for n,0,3-1
+      equw (body_right_4x16x3+n*((4*16)/4))
+    next ;n
+
+
+  .tail_up_8x8x1
+    incbin "gfx/tail_up_8x8x1.bin"
+  .*tail_up_8x8x1_sprites
+    for n,0,1-1
+      equw (tail_up_8x8x1+n*((8*8)/4))
+    next ;n
+
+  .tail_down_8x8x1
+    incbin "gfx/tail_down_8x8x1.bin"
+  .*tail_down_8x8x1_sprites
+    for n,0,1-1
+      equw (tail_down_8x8x1+n*((8*8)/4))
+    next ;n
+
+  .tail_left_8x16x2
+    incbin "gfx/tail_left_8x16x2.bin"
+  .*tail_left_8x16x2_sprites
+    for n,0,2-1
+      equw (tail_left_8x16x2+n*((8*16)/4))
+    next ;n
+
+  .tail_right_8x16x2
+    incbin "gfx/tail_right_8x16x2.bin"
+  .*tail_right_8x16x2_sprites
+    for n,0,2-1
+      equw (tail_right_8x16x2+n*((8*16)/4))
+    next ;n
+
+
+
+
+  .corner_left_up_8x16x8
+    incbin "gfx/corner_left_up_8x16x8.bin"
+  .*corner_left_up_8x16x8_sprites
+    for n,0,8-1
+      equw (corner_left_up_8x16x8+n*((8*16)/4))
+    next ;n
+
+  .corner_left_down_8x16x8
+    incbin "gfx/corner_left_down_8x16x8.bin"
+  .*corner_left_down_8x16x8_sprites
+    for n,0,8-1
+      equw (corner_left_down_8x16x8+n*((8*16)/4))
+    next ;n
+
+  .corner_right_up_8x16x8
+    incbin "gfx/corner_right_up_8x16x8.bin"
+  .*corner_right_up_8x16x8_sprites
+    for n,0,8-1
+      equw (corner_right_up_8x16x8+n*((8*16)/4))
+    next ;n
+
+  .corner_right_down_8x16x8
+    incbin "gfx/corner_right_down_8x16x8.bin"
+  .*corner_right_down_8x16x8_sprites
+    for n,0,8-1
+      equw (corner_right_down_8x16x8+n*((8*16)/4))
+    next ;n
+
+{
+  __P__=*
+  org &900
+  .*python_trail ; 256 bytes of free space needed (in page &900)
+  org __P__
+}
+
+  endasm;
+
+endfunction;

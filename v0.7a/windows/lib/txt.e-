@@ -1,0 +1,122 @@
+/*
+  Text module
+  Part of e- compiler package
+  Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+
+  call txt_init() before use
+*/
+
+declare txt_init();
+
+declare cursorto(byte, byte);
+declare vdu(byte);
+declare cursor(byte);
+declare defcolour(byte, byte);
+declare key(byte):int8;
+
+function txt_init()
+  // nothing
+endfunction;
+
+function key(_k:byte):int8 //&&&&fastcall! A=_k
+  asm
+    stx @0
+    tax
+    ldy #&ff
+    lda #&81
+    jsr &fff4 ; OSBYTE
+    ldx @0
+    tya
+    stal @_result
+  endasm;
+endfunction;
+
+function defcolour(_lg:byte, _ph:byte) //&&&&fastcall! A=_lg, Y=_ph
+  asm
+    pha
+    lda #19
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    pla
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    tya
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    lda #0
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    jmp &ffee ; jmp! OSWRCH (preserves A,X,Y) rts from there
+  endasm;
+endfunction;
+
+function cursorto(_x:byte, _y:byte) //&&&&fastcall! A=_x, Y=_y
+  asm
+    pha
+    lda #31
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    pla
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    tya
+    jmp &ffee ; jmp! OSWRCH (preserves A,X,Y) rts from there
+  endasm;
+endfunction;
+
+function vdu(_b:byte) //&&&&fastcall! A=_b
+  asm "jmp &ffee ; jmp! OSWRCH (preserves A,X,Y) rts from there";
+endfunction;
+
+function cursor(_b:byte) //&&&&fastcall! A=_b
+  declare b:byte;
+  asm "stal @b";
+
+  vdu(23); vdu(1); vdu(!!b and 1);
+  declare i:uint8;
+  i=0; while (i<7) vdu(0); i=i+1; endwhile;
+endfunction;
+
+
+
+
+
+
+
+
+
+
+
+
+//#####################################################################
+
+#ifdef TXT_PLUS // do we need extra Txt functions?
+
+declare printstr(word);
+declare colour(byte);
+
+function colour(_c:byte) //&&&&fastcall! A=_c
+  asm
+    tay
+    lda #17
+    jsr &ffee ; OSWRCH (preserves A,X,Y)
+    tya
+    jmp &ffee ; jmp! OSWRCH (preserves A,X,Y) rts from there
+  endasm;
+endfunction;
+
+function printstr(_s:word) //&&&&fastcall! YA=_s
+  asm
+    sta @0
+    sty @1
+    ldy #0
+    {
+      .loop
+        lda (@0),y
+        beq end
+        jsr &ffee ; OSWRCH (preserves A,X,Y)
+        iny
+        bne loop
+      .end
+    }
+  endasm;
+endfunction;
+
+#endif
+
+//#####################################################################

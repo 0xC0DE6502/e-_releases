@@ -1,0 +1,1194 @@
+/*
+  Sprites module
+  Part of e- compiler package
+  Copyright (c) 2021-2022 0xC0DE (@0xC0DE6502)
+
+  call spr_init() before use
+*/
+
+//&&&&TODO: make a generic sprite plot function to save space and sacrifice some speed
+
+#define putsprite12x16 __spr_spriteplot12x16_mode_5
+#define putsprite12x24 __spr_spriteplot12x24_mode_5
+#define putsprite16x16 __spr_spriteplot16x16_mode_5
+#define putsprite8x16 __spr_spriteplot8x16_mode_5
+#define putsprite8x24 __spr_spriteplot8x24_mode_5
+#define putsprite20x24 __spr_spriteplot20x24_mode_5
+#define putsprite4x16 __spr_spriteplot4x16_mode_5
+#define putsprite8x8 __spr_spriteplot8x8_mode_5
+
+declare spr_init();
+
+declare __spr_spriteplot12x16_mode_5(byte, byte, word);
+declare __spr_spriteplot12x24_mode_5(byte, byte, word);
+declare __spr_spriteplot16x16_mode_5(byte, byte, word);
+declare __spr_spriteplot8x16_mode_5(byte, byte, word);
+declare __spr_spriteplot8x24_mode_5(byte, byte, word);
+declare __spr_spriteplot20x24_mode_5(byte, byte, word);
+declare __spr_spriteplot4x16_mode_5(byte, byte, word);
+declare __spr_spriteplot8x8_mode_5(byte, byte, word);
+
+declare __spr_spriteplot_setup(byte, byte, word);
+
+declare __spr_screen:word;
+declare __spr_sprite:word;
+declare __spr_table:word;
+declare __spr_xcoord:word; // 2 bytes (!)
+declare __spr_ycoord:byte; // 1 byte (!)
+declare __spr_ymod8:byte;
+declare __spr_8minusymod8:byte;
+
+function spr_init()
+  // nothing
+  return;
+
+  asm
+    macro BLITLOOP
+    {
+    .loop
+      lda (@__spr_sprite),y
+      beq skip
+      eor (@__spr_screen),y
+      sta (@__spr_screen),y
+    .skip
+      dey
+      dex
+      bne loop
+    }
+    endmacro
+  endasm;
+endfunction;
+
+function __spr_spriteplot_setup(x:byte, y:byte, sprtable:word)
+  asm
+  {
+    lda #0
+    sta @__spr_xcoord+1
+    ldal @x
+    sta @__spr_xcoord
+    and #3
+  }
+  endasm;
+  #ifndef PYTHONGAME
+    asm "asl a";
+  #endif
+  asm
+  {
+    tay
+    asl @__spr_xcoord
+    rol @__spr_xcoord+1
+    ldal @y
+    sta @__spr_ycoord
+    ldal @sprtable
+    sta @__spr_table
+    ldal @sprtable+1
+    sta @__spr_table+1
+    ; we can use X freely after this because no more access to params and there are no local variables or return value
+    ; Y = 2*(xcoord mod 4)
+    lda (@__spr_table),y
+    sta @__spr_sprite
+    iny
+    lda (@__spr_table),y
+    sta @__spr_sprite+1
+    ldy @__spr_ycoord
+    lda @__spr_xcoord
+    and #%11111000
+    clc
+    adc mode_4_5_pixelrow_lo,y
+    sta @__spr_screen
+    lda @__spr_xcoord+1
+    adc mode_4_5_pixelrow_hi,y
+    sta @__spr_screen+1
+    tya
+    and #7
+    sta @__spr_ymod8
+    lda #8
+    sec
+    sbc @__spr_ymod8
+    sta @__spr_8minusymod8
+  }
+  endasm;
+endfunction;
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   12x24 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot12x24_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+; row 1 of 3
+
+  ; column 1 of 3
+  lda #24-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 3
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 3
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq next_row
+
+  ; column 1 of 3
+  ldy #24-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 3
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 3
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.next_row
+; start of row 2 of 3
+
+  clc
+  lda @__spr_sprite
+  adc #24 ; 24 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+
+  jmp entry_12x24
+
+  }
+  endasm;
+
+endfunction;
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   12x16 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot12x16_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+; row 1 of 2
+.*entry_12x24
+
+  ; column 1 of 3
+  lda #24-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 3
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 3
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq next_row
+
+  ; column 1 of 3
+  ldy #24-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 3
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 3
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.next_row
+; row 2 of 2
+
+  clc
+  lda @__spr_sprite
+  adc #24 ; 24 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+
+  ; column 1 of 3
+  lda #24-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 3
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 3
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq no_more_rows
+
+  ; column 1 of 3
+  ldy #24-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 3
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 3
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.no_more_rows
+
+  }
+  endasm;
+
+endfunction;
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   16x16 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot16x16_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+; row 1 of 2
+
+  ; column 1 of 4
+  lda #32-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 4
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 4
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 4 of 4
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq next_row
+
+  ; column 1 of 4
+  ldy #32-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 4
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 4
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 4 of 4
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.next_row
+; row 2 of 2
+
+  clc
+  lda @__spr_sprite
+  adc #32 ; 32 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+
+  ; column 1 of 4
+  lda #32-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 4
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 4
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 4 of 4
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq no_more_rows
+
+  ; column 1 of 4
+  ldy #32-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 4
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 4
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 4 of 4
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.no_more_rows
+
+  }
+  endasm;
+
+endfunction;
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   20x24 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot20x24_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+; row 1 of 3
+
+  ; column 1 of 5
+  lda #40-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 4 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 5 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq row2
+
+  ; column 1 of 5
+  ldy #40-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 4 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 5 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.row2
+; row 2 of 3
+
+{
+  clc
+  lda @__spr_sprite
+  adc #40 ; 40 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+}
+
+  ; column 1 of 5
+  lda #40-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 4 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 5 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq row3
+
+  ; column 1 of 5
+  ldy #40-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 4 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 5 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.row3
+; row 3 of 3
+
+{
+  clc
+  lda @__spr_sprite
+  adc #40 ; 40 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+}
+
+  ; column 1 of 5
+  lda #40-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 3 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 4 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 5 of 5
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq done
+
+  ; column 1 of 5
+  ldy #40-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 3 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 4 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+  ; column 5 of 5
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.done
+
+  }
+  endasm;
+
+endfunction;
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   8x24 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot8x24_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+; row 1 of 3
+
+  ; column 1 of 2
+  lda #16-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 2
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq next_row
+
+  ; column 1 of 2
+  ldy #16-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 2
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.next_row
+; row 2 of 2
+
+  clc
+  lda @__spr_sprite
+  adc #16 ; 16 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+
+  jmp entry_8x24
+
+  }
+  endasm;
+
+endfunction;
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   8x16 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot8x16_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+.*entry_8x24 ; __spr_spriteplot8x24_mode_5() jumps here
+
+; row 1 of 2
+
+  ; column 1 of 2
+  lda #16-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 2
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq next_row
+
+  ; column 1 of 2
+  ldy #16-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 2
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.next_row
+; row 2 of 2
+
+  clc
+  lda @__spr_sprite
+  adc #16 ; 16 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+
+  jmp entry_8x16
+
+  }
+  endasm;
+
+endfunction;
+
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   4x16 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot4x16_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+; row 1 of 2
+
+  ; column 1 of 1
+  lda #8-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq next_row
+
+  ; column 1 of 1
+  ldy #8-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+.next_row
+; row 2 of 2
+
+  clc
+  lda @__spr_sprite
+  adc #8 ; 8 bytes in a row
+  sta @__spr_sprite
+  bcc no_inc_spr
+  inc @__spr_sprite+1
+  .no_inc_spr
+  clc
+  lda @__spr_screen
+  adc #8
+  sta @__spr_screen
+  bcc no_inc_scr
+  inc @__spr_screen+1
+  .no_inc_scr
+
+  ; column 1 of 1
+  lda #8-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq no_more_rows
+
+  ; column 1 of 1
+  ldy #8-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+.no_more_rows
+
+  }
+  endasm;
+
+endfunction;
+
+
+/*
+   0<=x<160 (but no clipping)
+   0<=y<256 (but no clipping)
+   8x8 MODE 5 sprite data (2bpp)
+   needs 4 sprite variants (preshifted horizontally) if pixel perfect plot is needed
+   XOR plotting
+*/
+function __spr_spriteplot8x8_mode_5(x:byte, y:byte, sprtable:word)
+  __spr_spriteplot_setup(x, y, sprtable);
+  // we can use X freely after this because no more access to params and there are no local variables or return value
+
+  asm
+  {
+
+.*entry_8x16 ; __spr_spriteplot8x16_mode_5() jumps here
+
+; row 1 of 1
+
+  ; column 1 of 2
+  lda #16-1
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  ; column 2 of 2
+  tya
+  sec
+  sbc @__spr_ymod8
+  tay
+  ldx @__spr_8minusymod8
+  BLITLOOP
+
+  clc
+  lda @__spr_screen
+  adc #lo(320-8)
+  sta @__spr_screen
+  lda @__spr_screen+1
+  adc #hi(320-8)
+  sta @__spr_screen+1
+
+  ldx @__spr_ymod8
+  beq no_more_rows
+
+  ; column 1 of 2
+  ldy #16-1
+  ; X is still __spr_ymod8
+  BLITLOOP
+
+  ; column 2 of 2
+  tya
+  sec
+  sbc @__spr_8minusymod8
+  tay
+  ldx @__spr_ymod8
+  BLITLOOP
+
+.no_more_rows
+
+  }
+  endasm;
+
+endfunction;
